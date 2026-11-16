@@ -1,0 +1,28 @@
+# Sistema operacional
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# Editores / IDEs
+.vscode/
+.idea/
+
+# Segredos e dados pessoais
+.env
+.env.*
+*.local
+dados-pessoais/
+curriculos/
+
+# Python (caso a construção B em Python seja escolhida)
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# .NET (caso a construção B em .NET seja escolhida)
+bin/
+obj/
+
+# Node
+node_modules/
