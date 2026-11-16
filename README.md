@@ -28,7 +28,7 @@ Agente de IA para gestão de carreira: otimização de currículo, perfil no Lin
 
 ## Documentação
 
-- [Requisitos (índice)](docs/requisitos-agente-de-carreira.pdf) — a fonte da verdade é o documento completo *Agente de Carreira — Especificação de Requisitos* (versão de 16/11/2026).
+- [Especificação de Requisitos](docs/Agente_de_Carreira_Especificacao_de_Requisitos.pdf) — documento completo *Agente de Carreira — Especificação de Requisitos* (versão de 16/11/2026), a fonte da verdade do projeto.
 
 ## Decisões em aberto
 
