@@ -2157,9 +2157,10 @@ app.command("exportar")(exportar_dados)
 @app.command("app")
 def abrir_app() -> None:
     """Abre o app de janela, com botões para as ações do dia a dia."""
-    from .app import abrir_janela
+    from .app import abrir_em_segundo_plano
 
-    abrir_janela()
+    abrir_em_segundo_plano()
+    console.print("Abrindo o app do agente…")
 
 
 @app.command("atalho")

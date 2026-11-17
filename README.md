@@ -139,7 +139,13 @@ uv run agente --help # mostra os comandos
 
 ### App na Área de Trabalho
 
-`uv run agente atalho` cria o atalho **Agente de Carreira** na Área de Trabalho (Windows). Ele abre uma janela com botões para as ações do dia a dia: buscar vagas, resumo do dia, fila de aprovações, candidatar-se, funil, perfil e CV, relatórios e o painel no navegador. No topo aparece o que pede atenção agora. Cada botão abre um console com o comando correspondente, porque quase tudo pede a sua confirmação, e o console espera Enter para fechar. A janela também abre com `uv run agente app` ou `uv run agente-app`.
+Para quem não é de TI, o jeito de usar é o app. `uv run agente atalho` cria o atalho **Agente de Carreira** na Área de Trabalho (Windows), e dois cliques abrem a janela, sem nenhum terminal.
+
+- **Início:** mostra o próximo passo sugerido, os números do dia (vagas boas, candidaturas, lembretes, aprovações) e, no primeiro uso, um passo a passo: trazer o currículo, conectar o LinkedIn, dizer que vagas procura e fazer a primeira busca.
+- **Vagas** e **Minhas candidaturas:** listas clicáveis, com botões como "Quero me candidatar", "Não tenho interesse" e "O que aconteceu?" (com a data da entrevista ou o motivo da saída).
+- **Meu perfil e currículo**, **LinkedIn**, **Aprovações** (aprovar, editar ou recusar com um clique), **Relatórios** e **Configurações** (buscas, agendamentos, avisos por e-mail).
+
+As ações rodam dentro da janela, e cada pergunta do agente aparece como botões de Sim/Não, de opção ou um campo para digitar. Nada é enviado nem publicado sem o seu sim. A janela também abre com `uv run agente app`.
 
 Comandos principais:
 

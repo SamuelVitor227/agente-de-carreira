@@ -391,7 +391,7 @@ def funil_mover(
         motivo = opcoes[int(escolha) - 1] if escolha.isdigit() and 1 <= int(escolha) <= len(opcoes) else escolha
     data = None
     if nova in ETAPAS_COM_DATA:
-        texto = quando or typer.prompt("Data e hora (AAAA-MM-DD HH:MM; Enter = sem data)", default="", show_default=False)
+        texto = quando if quando is not None else typer.prompt("Data e hora (AAAA-MM-DD HH:MM; Enter = sem data)", default="", show_default=False)
         if texto.strip():
             try:
                 data = datetime.strptime(texto.strip(), "%Y-%m-%d %H:%M").astimezone().astimezone(timezone.utc)
