@@ -45,6 +45,21 @@ Agente de IA para gestão de carreira: otimização de currículo, perfil no Lin
 | RF-CV-06 | Sugestões reais para fechar lacunas (curso/certificação/projeto), priorizando catálogos que você já tem (DIO) | ✅ Implementado |
 | RF-CV-07 | Variantes por foco (backend .NET, cloud AWS, mobile, dados, suporte) e idioma (pt/en), derivadas da versão-base | ✅ Implementado |
 | RF-CV-08 | Exportação PDF e DOCX compatível com ATS (uma coluna, sem tabelas/imagens, fonte padrão, formato único de data, tamanho-alvo) | ✅ Implementado |
+| RF-CV-09 | Revisão da versão-base (mensal ou quando as vagas mudarem) com antes × depois | ✅ Implementado |
+| RF-CV-10 | Desempenho por variante (candidaturas × retornos) com recomendação por foco | ✅ Implementado |
+| RF-CV-11 | Versão sob medida por vaga, só com itens do perfil-mestre | ✅ Implementado |
+| RF-CV-12 | Antes × depois e cobertura da vaga (atendidos / incluídos / sem lastro) | ✅ Implementado |
+| RF-CV-13 | Marcador [A CONFIRMAR] com bloqueio de exportação até a confirmação | ✅ Implementado |
+| RF-CV-14 | Cópia da versão de CV enviada guardada junto da candidatura | ✅ Implementado |
+| RF-LI-01 | Auditoria do perfil contra o checklist do Anexo A, pendências por impacto | ✅ Implementado |
+| RF-LI-02 | 3 opções de título (≤220 caracteres, essencial nos primeiros 60) | ✅ Implementado |
+| RF-LI-03 | Seção Sobre (≤2.600 caracteres, proposta de valor nos ~300 primeiros) | ✅ Implementado |
+| RF-LI-04 | Textos de experiência (≤2.000/cargo), mesmos cargos e datas do CV | ✅ Implementado |
+| RF-LI-05 | Competências priorizadas pelas vagas-alvo, com vínculos (limite 100) | ✅ Implementado |
+| RF-LI-06 | Pacote do Open to Work (≤5 cargos, locais, visibilidade) | ✅ Implementado |
+| RF-LI-07 | Ajustes de perfil: localização, URL personalizada validada, contato, Em destaque, certificações, idiomas | ✅ Implementado |
+| RF-LI-08 | Rodada de edições com desligar/religar o compartilhamento de atualizações | ✅ Implementado |
+| RF-LI-09 | Até 20 alertas de vagas diários por e-mail, espelhando as buscas | ✅ Implementado |
 
 ## Como usar
 
@@ -76,6 +91,14 @@ uv run agente cv nota                 # nota ATS 0-100 com o que mudou desde a �
 uv run agente cv fechar-lacunas       # curso/certificação/projeto para cada lacuna sem lastro
 uv run agente cv variante --foco backend-dotnet --idioma pt   # variante derivada da versão-base
 uv run agente cv exportar --foco backend-dotnet --formato ambos  # PDF+DOCX compatíveis com ATS
+uv run agente cv sob-medida --vaga 1 --exportar  # CV sob medida com cobertura da vaga
+uv run agente cv revisar                 # revisão mensal da versão-base (antes × depois)
+uv run agente cv desempenho              # candidaturas × retornos por variante
+uv run agente confirmar                  # confirma frases [A CONFIRMAR] e libera exportação
+uv run agente candidatura registrar --vaga 1 --foco backend-dotnet  # guarda o CV enviado
+uv run agente li auditar                 # auditoria do LinkedIn (checklist Anexo A)
+uv run agente li titulo / sobre / experiencias / competencias       # textos do LinkedIn
+uv run agente li open-to-work / ajustes / alertas / rodada          # pacotes e passo a passo
 ```
 
 Os dados ficam em `data/perfil-mestre.json` (fora do git), configurável pela variável `AGENTE_CARREIRA_DATA`.
