@@ -39,7 +39,7 @@ app = typer.Typer(help="Agente de Carreira — perfil-mestre e otimização de c
 perfil_app = typer.Typer(help="Gerencia o perfil-mestre (RF-PM-01, RF-PM-06, RF-PM-07).", no_args_is_help=True)
 experiencia_app = typer.Typer(help="Gerencia experiências (RF-PM-03, RF-PM-05).", no_args_is_help=True)
 conquista_app = typer.Typer(help="Banco de conquistas reutilizáveis (RF-PM-04).", no_args_is_help=True)
-vaga_app = typer.Typer(help="Vagas-alvo para análise (RF-CV-01).", no_args_is_help=True)
+vaga_app = typer.Typer(help="Vagas-alvo para a análise do CV (RF-CV-01).", no_args_is_help=True)
 cv_app = typer.Typer(help="Otimização do currículo (RF-CV-01 a RF-CV-14).", no_args_is_help=True)
 candidatura_app = typer.Typer(help="Candidaturas e CV enviado (RF-CV-10, RF-CV-14).", no_args_is_help=True)
 li_app = typer.Typer(help="LinkedIn em modo copiloto (RF-LI-01 a RF-LI-15).", no_args_is_help=True)
@@ -1841,6 +1841,11 @@ def post_publicado(id_: str = typer.Argument(..., metavar="ID")) -> None:
 
 ia_app = typer.Typer(help="Uso de IA: motor por tarefa, fila de pedidos e registro (RF-IA-01 a RF-IA-05).", no_args_is_help=True)
 app.add_typer(ia_app, name="ia")
+
+from .cli_vagas import busca_app, vagas_app  # noqa: E402 - registrado junto dos demais grupos
+
+app.add_typer(busca_app, name="busca")
+app.add_typer(vagas_app, name="vagas")
 
 
 @ia_app.command("motores")

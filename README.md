@@ -71,6 +71,19 @@ Agente de IA para gestão de carreira: otimização de currículo, perfil no Lin
 | RF-IA-03 | Sem autorização nada é gerado; o pedido fica pendente na fila para autorizar ou descartar depois | ✅ Implementado |
 | RF-IA-04 | Filtro automático que remove e-mail, telefone, CPF, RG, CEP e endereço de todo prompt | ✅ Implementado |
 | RF-IA-05 | Registro de cada uso: data, motor, tarefa, dados enviados, removidos, autorização e resultado | ✅ Implementado |
+| RF-VG-01 | Buscas salvas: cargos e sinônimos, nível, modelo, localidades, contrato, salário mínimo, idioma, empresas-alvo e bloqueadas | ✅ Implementado |
+| RF-VG-02 | Coleta só de fontes permitidas: alertas por e-mail (.eml ou IMAP somente leitura), páginas de carreira e links seus | ✅ Implementado |
+| RF-VG-03 | Rodada sob demanda e agendada (padrão 7h, Agendador do Windows ou cron) | ✅ Implementado |
+| RF-VG-04 | Extração de título, empresa, local, modelo, contrato, nível, salário, datas, link, fonte, descrição e requisitos | ✅ Implementado |
+| RF-VG-05 | Deduplicação entre fontes (link, empresa + cargo + local, similaridade), mantendo todas as fontes | ✅ Implementado |
+| RF-VG-06 | Aderência 0–100 no motor local (TF-IDF + cobertura de requisitos) com justificativa | ✅ Implementado |
+| RF-VG-07 | Filtros eliminatórios: experiência, idioma, região, encerrada, empresa bloqueada, nível, modelo, contrato, salário | ✅ Implementado |
+| RF-VG-08 | Indícios de golpe: taxa, Pix/dados bancários, renda fácil, contato só por app, salário irreal, empresa sem identificação | ✅ Implementado |
+| RF-VG-09 | Resumo diário por aderência, com link, motivo e ação sugerida (candidatar, salvar, descartar) | ✅ Implementado |
+| RF-VG-10 | Alerta imediato de vagas acima do limiar (padrão 80) | ✅ Implementado |
+| RF-VG-11 | Aprendizado com feedback (interessa ou não, e o motivo): ajusta pesos e sugere filtros | ✅ Implementado |
+| RF-VG-12 | Vagas expiradas (prazo, idade, anúncio encerrado, link fora do ar) saem do resumo | ✅ Implementado |
+| RF-VG-13 | Regras de estágio (RN-07): sem matrícula ativa, estágio sai do resumo; jornada acima de 6h/30h sinalizada | ✅ Implementado |
 
 ## Como usar
 
@@ -121,7 +134,23 @@ uv run agente li post rascunho N --ia / editar / aprovar / publicado   # posts s
 uv run agente ia motores / motor TAREFA MOTOR   # motor de cada tarefa (claude, gemini, local, perguntar)
 uv run agente ia fila / autorizar ID / descartar ID   # pedidos de IA negados, pendentes de decisão
 uv run agente ia log                     # registro de cada uso de IA
+uv run agente busca criar --nome backend --foco backend-dotnet   # busca salva com cargos e sinônimos
+uv run agente busca empresa "Empresa X" --pagina https://empresax.gupy.io/   # empresa-alvo
+uv run agente vagas rodada               # coleta, triagem, aderência e resumo do dia
+uv run agente vagas link URL [--descricao vaga.txt]   # vaga a partir de um link seu
+uv run agente vagas resumo [--ia]        # resumo do dia; --ia prepara a justificativa escrita
+uv run agente vagas ver ID / feedback ID --interessa|--nao-interessa --motivo X / salvar ID / descartar ID
+uv run agente vagas agendar --hora 07:00 # rodada diária no Agendador do Windows
 ```
+
+### Alertas de vagas por e-mail
+
+A rodada lê os alertas de duas formas:
+
+- **Arquivos .eml** salvos em `data/caixa-alertas/` (arrastar o e-mail do cliente de e-mail para a pasta). Depois de lidos, vão para `processados/`.
+- **IMAP, somente leitura**, numa pasta só de alertas (padrão `Vagas`), sem marcar nada como lido. As credenciais ficam só em variáveis de ambiente, nunca no projeto: `AGENTE_IMAP_HOST`, `AGENTE_IMAP_USUARIO`, `AGENTE_IMAP_SENHA` (use uma senha de app) e, opcionalmente, `AGENTE_IMAP_PASTA`.
+
+Vagas do LinkedIn, Indeed e afins entram só pelos alertas, porque os termos dessas plataformas proíbem leitura automatizada; para a descrição completa, cole o texto com `agente vagas link URL --descricao arquivo.txt`. Páginas de outros sites só são abertas se o robots.txt permitir.
 
 A pauta lê seus repositórios pelo [GitHub CLI](https://cli.github.com) (`gh auth login`), somente leitura; repositórios privados e forks ficam de fora.
 
