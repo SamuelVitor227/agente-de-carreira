@@ -137,6 +137,10 @@ uv run pytest        # roda os testes
 uv run agente --help # mostra os comandos
 ```
 
+### App na Área de Trabalho
+
+`uv run agente atalho` cria o atalho **Agente de Carreira** na Área de Trabalho (Windows). Ele abre uma janela com botões para as ações do dia a dia: buscar vagas, resumo do dia, fila de aprovações, candidatar-se, funil, perfil e CV, relatórios e o painel no navegador. No topo aparece o que pede atenção agora. Cada botão abre um console com o comando correspondente, porque quase tudo pede a sua confirmação, e o console espera Enter para fechar. A janela também abre com `uv run agente app` ou `uv run agente-app`.
+
 Comandos principais:
 
 ```bash
@@ -178,6 +182,7 @@ uv run agente ia fila / autorizar ID / descartar ID   # pedidos de IA negados, p
 uv run agente ia log                     # registro de cada uso de IA
 uv run agente ia recusado ID            # o motor recusou por limite: refazer no outro ou seguir local
 uv run agente ia lote / lote criar --tarefa X / lote revogar ID   # autorização em lote (RF-IA-08)
+uv run agente app / atalho              # app de janela e atalho na Área de Trabalho
 uv run agente aceite [--fase 1|2]        # portões: CA-01 a CA-10 (MVP) e CA-11, CA-12 (fase 2)
 uv run agente plataformas / ver ID / pacote ID       # catálogo, campos e pacote de cadastro
 uv run agente plataformas cadastrar ID   # cadastro guiado (copiloto ou assistido), pausa e retoma

@@ -17,6 +17,9 @@ dependencies = [
 [project.scripts]
 agente = "agente_carreira.cli:app"
 
+[project.gui-scripts]
+agente-app = "agente_carreira.app:main"
+
 [dependency-groups]
 dev = ["pytest>=8.3"]
 

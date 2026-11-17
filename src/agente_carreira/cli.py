@@ -2132,6 +2132,27 @@ app.add_typer(relatorio_app, name="relatorio")
 app.command("exportar")(exportar_dados)
 
 
+@app.command("app")
+def abrir_app() -> None:
+    """Abre o app de janela, com botões para as ações do dia a dia."""
+    from .app import abrir_janela
+
+    abrir_janela()
+
+
+@app.command("atalho")
+def criar_atalho_cmd() -> None:
+    """Cria o atalho "Agente de Carreira" na Área de Trabalho (Windows)."""
+    from .app import criar_atalho
+
+    try:
+        caminho = criar_atalho()
+    except RuntimeError as erro:
+        console.print(f"[red]{escape(str(erro))}[/red]")
+        raise typer.Exit(1)
+    console.print(f"[green]Atalho criado:[/green] {caminho}. Dê dois cliques para abrir o agente.")
+
+
 @ia_app.command("motores")
 def ia_motores() -> None:
     """Mostra o motor configurado para cada tarefa (RF-IA-01)."""
