@@ -87,6 +87,17 @@ Agente de IA para gestão de carreira: otimização de currículo, perfil no Lin
 | RF-VG-11 | Aprendizado com feedback (interessa ou não, e o motivo): ajusta pesos e sugere filtros | ✅ Implementado |
 | RF-VG-12 | Vagas expiradas (prazo, idade, anúncio encerrado, link fora do ar) saem do resumo | ✅ Implementado |
 | RF-VG-13 | Regras de estágio (RN-07): sem matrícula ativa, estágio sai do resumo; jornada acima de 6h/30h sinalizada | ✅ Implementado |
+| RF-PL-01 | Catálogo de plataformas (Anexo B): URL, foco, prioridade, modo, campos, limites, formatos, revisão dos termos | ✅ Implementado |
+| RF-PL-02 | Pacote de cadastro por plataforma, cada campo mapeado do perfil-mestre e ajustado ao limite | ✅ Implementado |
+| RF-PL-03 | Cadastro guiado no modo da plataforma (copiloto ou assistido com Playwright), pausando para conta, login, 2FA, CAPTCHA e termos | ✅ Implementado |
+| RF-PL-04 | Revisão campo a campo do que a plataforma preencheu a partir do CV | ✅ Implementado |
+| RF-PL-05 | Gupy: Experiência e Habilidades ordenadas pelas vagas-alvo e campo "Apresente-se" | ✅ Implementado |
+| RF-PL-06 | Variante de CV adequada ao foco da plataforma | ✅ Implementado |
+| RF-PL-07 | Conferência do que ficou gravado e percentual de completude | ✅ Implementado |
+| RF-PL-08 | Propagação: plataformas desatualizadas pelo perfil-mestre ganham tarefa de atualização | ✅ Implementado |
+| RF-PL-09 | Status por plataforma (não iniciado, em andamento, completo, desatualizado) e última revisão | ✅ Implementado |
+| RF-PL-10 | Aviso antes de etapas pagas; nada é contratado | ✅ Implementado |
+| RF-PL-11 | Testes técnicos são do usuário; o agente prepara material de estudo | ✅ Implementado |
 | RF-OP-01 | Preferências num só lugar: buscas, limites diários, limiares, horários, notificações, modo por plataforma e motor por tarefa | ✅ Implementado |
 | RF-OP-02 | Modo global "somente sugestão": nenhuma plataforma é tocada | ✅ Implementado |
 | RF-OP-03 | Pausar, retomar e cancelar tarefas; retomar a partir do último passo confirmado | ✅ Implementado |
@@ -151,6 +162,11 @@ uv run agente ia log                     # registro de cada uso de IA
 uv run agente ia recusado ID            # o motor recusou por limite: refazer no outro ou seguir local
 uv run agente ia lote / lote criar --tarefa X / lote revogar ID   # autorização em lote (RF-IA-08)
 uv run agente aceite                     # portão do MVP: critérios CA-01 a CA-10 sobre os seus dados
+uv run agente plataformas / ver ID / pacote ID       # catálogo, campos e pacote de cadastro
+uv run agente plataformas cadastrar ID   # cadastro guiado (copiloto ou assistido), pausa e retoma
+uv run agente plataformas conferir ID [--antes-de-salvar]   # confere o gravado e mede a completude
+uv run agente plataformas propagar       # plataformas desatualizadas ganham tarefa de atualização
+uv run agente plataformas estudo ID      # material de estudo para testes técnicos
 uv run agente busca criar --nome backend --foco backend-dotnet   # busca salva com cargos e sinônimos
 uv run agente busca empresa "Empresa X" --pagina https://empresax.gupy.io/   # empresa-alvo
 uv run agente vagas rodada               # coleta, triagem, aderência e resumo do dia
@@ -166,6 +182,10 @@ uv run agente auditoria / auditoria ver ID           # ações externas com ante
 uv run agente saude / saude reativar NOME            # adaptadores parados por erro ou layout novo
 uv run agente notificacoes teste         # testa o canal de notificação
 ```
+
+### Modo assistido (Playwright)
+
+Plataformas no modo assistido (como a Gupy) abrem um navegador visível com perfil próprio em `data/navegador`. Você faz login, 2FA e CAPTCHA; o agente confere se os campos esperados estão na página, preenche com intervalo entre as ações e limite por sessão, tira uma captura para a auditoria e **para antes de salvar** — quem clica é você. Se a página não tiver os campos esperados, ele não preenche nada e volta para o copiloto. Depois de `uv sync`, instale o navegador uma vez: `uv run playwright install chromium`.
 
 ### Notificações
 

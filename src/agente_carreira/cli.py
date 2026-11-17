@@ -2107,6 +2107,7 @@ from .cli_operacao import (  # noqa: E402 - registrado junto dos demais grupos
     tarefas_app,
 )
 from .cli_vagas import busca_app, vagas_app  # noqa: E402
+from .cli_plataformas import plataformas_app  # noqa: E402
 
 app.add_typer(busca_app, name="busca")
 app.add_typer(vagas_app, name="vagas")
@@ -2116,6 +2117,7 @@ app.add_typer(tarefas_app, name="tarefas")
 app.add_typer(auditoria_app, name="auditoria")
 app.add_typer(saude_app, name="saude")
 app.add_typer(notificacoes_app, name="notificacoes")
+app.add_typer(plataformas_app, name="plataformas")
 
 
 @ia_app.command("motores")
