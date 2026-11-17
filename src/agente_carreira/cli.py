@@ -28,15 +28,22 @@ from .models import (
     PerfilMestre,
     Vinculo,
 )
-from .storage import caminho_perfil, carregar_perfil, perfil_existe, salvar_perfil
+from .storage import caminho_perfil, carregar_perfil, diretorio_dados, perfil_existe, salvar_perfil
+from .vagas import Vaga, carregar_vagas, conjunto_de_analise, salvar_vagas
+from .validacao import validar_perfil
+from .versionamento import carregar_versao, listar_versoes, restaurar_versao, resumo_diferencas
 
 app = typer.Typer(help="Agente de Carreira — perfil-mestre e otimização de currículo.", no_args_is_help=True)
-perfil_app = typer.Typer(help="Gerencia o perfil-mestre (RF-PM-01).", no_args_is_help=True)
+perfil_app = typer.Typer(help="Gerencia o perfil-mestre (RF-PM-01, RF-PM-06, RF-PM-07).", no_args_is_help=True)
 experiencia_app = typer.Typer(help="Gerencia experiências (RF-PM-03, RF-PM-05).", no_args_is_help=True)
 conquista_app = typer.Typer(help="Banco de conquistas reutilizáveis (RF-PM-04).", no_args_is_help=True)
+vaga_app = typer.Typer(help="Vagas-alvo para análise (RF-CV-01).", no_args_is_help=True)
+cv_app = typer.Typer(help="Otimização do currículo (RF-CV-01 a RF-CV-03).", no_args_is_help=True)
 app.add_typer(perfil_app, name="perfil")
 app.add_typer(experiencia_app, name="experiencia")
 app.add_typer(conquista_app, name="conquista")
+app.add_typer(vaga_app, name="vaga")
+app.add_typer(cv_app, name="cv")
 
 console = Console()
 
@@ -138,6 +145,64 @@ def perfil_mostrar() -> None:
     if pend:
         console.print(f"[yellow]{pend} rascunho(s) de importação pendentes — veja 'agente rascunhos'.[/yellow]")
     console.print(f"[dim]Atualizado em {perfil.atualizado_em:%d/%m/%Y %H:%M} UTC — {caminho_perfil()}[/dim]")
+
+
+@perfil_app.command("validar")
+def perfil_validar() -> None:
+    """Valida completude e consistência do perfil (RF-PM-07)."""
+    perfil = carregar_perfil()
+    problemas = validar_perfil(perfil)
+    if not problemas:
+        console.print("[green]Nenhum problema encontrado: perfil completo e consistente.[/green]")
+        return
+    cores = {"erro": "red", "aviso": "yellow", "info": "cyan"}
+    tabela = Table(title=f"Validação do perfil-mestre — {len(problemas)} apontamento(s)")
+    tabela.add_column("Nível")
+    tabela.add_column("Código")
+    tabela.add_column("Mensagem", overflow="fold")
+    for p in problemas:
+        tabela.add_row(f"[{cores[p.nivel]}]{p.nivel}[/{cores[p.nivel]}]", p.codigo, p.mensagem)
+    console.print(tabela)
+    if any(p.nivel == "erro" for p in problemas):
+        raise typer.Exit(1)
+
+
+@perfil_app.command("versoes")
+def perfil_versoes() -> None:
+    """Lista o histórico de versões do perfil (RF-PM-06)."""
+    versoes = listar_versoes(diretorio_dados())
+    if not versoes:
+        console.print("Nenhuma versão arquivada ainda (o histórico começa no segundo salvamento).")
+        return
+    tabela = Table(title=f"Histórico do perfil-mestre ({len(versoes)} versão(ões))")
+    tabela.add_column("#")
+    tabela.add_column("Arquivada em")
+    tabela.add_column("Mudanças em relação à anterior", overflow="fold")
+    for i, versao in enumerate(versoes, 1):
+        carimbo = versao.stem.removeprefix("perfil-mestre-")
+        quando = f"{carimbo[6:8]}/{carimbo[4:6]}/{carimbo[:4]} {carimbo[9:11]}:{carimbo[11:13]}"
+        anterior = versoes[i] if i < len(versoes) else None
+        mudancas = ", ".join(resumo_diferencas(anterior, versao)) if anterior else "(primeira versão)"
+        tabela.add_row(str(i), quando, mudancas or "sem mudanças de conteúdo")
+    console.print(tabela)
+    console.print("Restaure com 'agente perfil restaurar N'.")
+
+
+@perfil_app.command("restaurar")
+def perfil_restaurar(numero: int = typer.Argument(..., help="Número da versão em 'agente perfil versoes'.")) -> None:
+    """Restaura uma versão arquivada do perfil (RF-PM-06)."""
+    versoes = listar_versoes(diretorio_dados())
+    if not 1 <= numero <= len(versoes):
+        console.print(f"[red]Versão {numero} não existe (há {len(versoes)} arquivada(s)).[/red]")
+        raise typer.Exit(1)
+    alvo = versoes[numero - 1]
+    perfil_antigo = carregar_versao(alvo)
+    console.print(f"Versão {numero}: {perfil_antigo.contato.nome}, atualizada em {perfil_antigo.atualizado_em:%d/%m/%Y %H:%M} UTC.")
+    if not typer.confirm("Restaurar esta versão? (a atual vai para o histórico)"):
+        console.print("Nada foi alterado.")
+        raise typer.Exit(0)
+    restaurar_versao(alvo, caminho_perfil())
+    console.print("[green]Versão restaurada.[/green]")
 
 
 # ---------------------------------------------------------------- importar
@@ -350,6 +415,162 @@ def conquista_listar() -> None:
             ", ".join(c.tecnologias), c.evidencia or "",
         )
     console.print(tabela)
+
+
+# ---------------------------------------------------------------- vagas-alvo
+
+@vaga_app.command("adicionar")
+def vaga_adicionar(
+    arquivo: Path | None = typer.Option(None, "--arquivo", exists=True, readable=True, help="Arquivo .txt/.md com a descrição da vaga."),
+) -> None:
+    """Salva uma vaga-alvo para o conjunto de análise (RF-CV-01)."""
+    colecao = carregar_vagas()
+    titulo = typer.prompt("Título da vaga")
+    empresa = typer.prompt("Empresa (opcional)", default="", show_default=False)
+    foco = typer.prompt("Foco (ex.: backend-dotnet, cloud-aws, mobile, dados, suporte)")
+    url = typer.prompt("URL (opcional)", default="", show_default=False)
+    fonte = typer.prompt("Fonte (ex.: linkedin, gupy, site da empresa; opcional)", default="", show_default=False)
+    if arquivo is not None:
+        descricao = arquivo.read_text(encoding="utf-8")
+    else:
+        descricao = "\n".join(_prompt_multilinha("Descrição/requisitos da vaga"))
+    if not descricao.strip():
+        console.print("[red]A descrição é obrigatória: é dela que saem os termos.[/red]")
+        raise typer.Exit(1)
+    vaga = Vaga(
+        titulo=titulo, empresa=empresa or None, foco=foco,
+        url=url or None, fonte=fonte or None, descricao=descricao,
+    )
+    colecao.vagas.append(vaga)
+    salvar_vagas(colecao)
+    console.print(f"[green]Vaga salva:[/green] {titulo} (foco {foco}) — {len(colecao.vagas)} vaga(s) no total.")
+
+
+@vaga_app.command("listar")
+def vaga_listar(foco: str | None = typer.Option(None, "--foco", help="Filtra por foco.")) -> None:
+    """Lista as vagas-alvo salvas."""
+    colecao = carregar_vagas()
+    vagas = [v for v in colecao.vagas if foco is None or v.foco == foco]
+    if not vagas:
+        console.print("Nenhuma vaga salva. Use 'agente vaga adicionar'.")
+        return
+    tabela = Table(title=f"Vagas-alvo ({len(vagas)})")
+    for col in ("#", "Título", "Empresa", "Foco", "Fonte", "Salva em"):
+        tabela.add_column(col)
+    for i, v in enumerate(vagas, 1):
+        tabela.add_row(str(i), v.titulo, v.empresa or "", v.foco, v.fonte or "", f"{v.salva_em:%d/%m/%Y}")
+    console.print(tabela)
+
+
+@vaga_app.command("remover")
+def vaga_remover(numero: int = typer.Argument(..., help="Número da vaga em 'agente vaga listar'.")) -> None:
+    """Remove uma vaga-alvo."""
+    colecao = carregar_vagas()
+    if not 1 <= numero <= len(colecao.vagas):
+        console.print(f"[red]Vaga {numero} não existe.[/red]")
+        raise typer.Exit(1)
+    removida = colecao.vagas.pop(numero - 1)
+    salvar_vagas(colecao)
+    console.print(f"[green]Removida:[/green] {removida.titulo}")
+
+
+# ---------------------------------------------------------------- otimização de CV
+
+def _conjunto_ou_sai(foco: str | None, limite: int):
+    conjunto = conjunto_de_analise(carregar_vagas(), foco=foco, limite=limite)
+    if not conjunto:
+        console.print("[yellow]Nenhuma vaga-alvo salva" + (f" para o foco {foco!r}" if foco else "") + ". Use 'agente vaga adicionar'.[/yellow]")
+        raise typer.Exit(1)
+    return conjunto
+
+
+@cv_app.command("termos")
+def cv_termos(
+    foco: str | None = typer.Option(None, "--foco"),
+    limite: int = typer.Option(30, "--limite", help="Tamanho do conjunto de vagas (padrão 30)."),
+) -> None:
+    """Extrai requisitos, competências e termos mais frequentes das vagas-alvo (RF-CV-01)."""
+    from .analise.termos import extrair_termos
+
+    conjunto = _conjunto_ou_sai(foco, limite)
+    termos = extrair_termos(conjunto)
+    tabela = Table(title=f"Termos mais frequentes em {len(conjunto)} vaga(s)" + (f" — foco {foco}" if foco else ""))
+    tabela.add_column("Termo")
+    tabela.add_column("Vagas")
+    tabela.add_column("%")
+    tabela.add_column("Tipo")
+    for t in termos:
+        tabela.add_row(t.termo, f"{t.vagas_em_que_aparece}/{t.total_de_vagas}", f"{t.percentual}%", "tecnologia" if t.e_tecnologia else "termo")
+    console.print(tabela)
+
+
+@cv_app.command("lacunas")
+def cv_lacunas(
+    foco: str | None = typer.Option(None, "--foco"),
+    limite: int = typer.Option(30, "--limite"),
+) -> None:
+    """Relatório de lacunas em três grupos (RF-CV-02)."""
+    from .analise.lacunas import gerar_relatorio
+    from .analise.termos import extrair_termos
+
+    perfil = carregar_perfil()
+    conjunto = _conjunto_ou_sai(foco, limite)
+    relatorio = gerar_relatorio(perfil, extrair_termos(conjunto))
+
+    def _secao(titulo: str, cor: str, itens, dica: str) -> None:
+        console.print(f"\n[bold {cor}]{titulo}[/bold {cor}] — {dica}")
+        if not itens:
+            console.print("  (nenhum)")
+        for item in itens:
+            extra = f" — encontrado em: {item.onde_encontrado}" if item.onde_encontrado else ""
+            console.print(f"  • {item.termo} ({item.vagas_em_que_aparece} vaga(s), {item.percentual}%){extra}")
+
+    console.print(f"[bold]Relatório de lacunas[/bold] — conjunto de {relatorio.total_de_vagas} vaga(s)")
+    _secao("1. Você tem e já está no CV", "green", relatorio.ja_no_cv, "nada a fazer")
+    _secao("2. Você tem, mas não aparece", "yellow", relatorio.tem_mas_nao_aparece, "basta destacar no CV")
+    _secao("3. Você não tem (ou não registrou)", "red", relatorio.nao_tem, "fechar de verdade — nunca inventar (RN-02)")
+
+
+@cv_app.command("reescrever")
+def cv_reescrever(
+    foco: str | None = typer.Option(None, "--foco"),
+    limite: int = typer.Option(30, "--limite"),
+    motor: str = typer.Option("claude", "--motor", help="Motor de IA: claude ou gemini."),
+) -> None:
+    """Prepara a reescrita do resumo/experiências/projetos em modo copiloto (RF-CV-03, RF-IA-02)."""
+    from .analise.reescrita import MOTORES, dados_enviados, montar_prompt
+    from .analise.termos import extrair_termos
+
+    if motor not in MOTORES:
+        console.print(f"[red]Motor desconhecido: {motor}. Use um de: {', '.join(MOTORES)}.[/red]")
+        raise typer.Exit(1)
+    perfil = carregar_perfil()
+    conjunto = _conjunto_ou_sai(foco, limite)
+    termos = extrair_termos(conjunto)
+
+    # RF-IA-02 / RN-14: aviso do motor, da tarefa e dos dados, com autorização a cada uso.
+    console.print(Panel(
+        f"[bold]Motor:[/bold] {motor} (sua assinatura; você cola o prompt manualmente)\n"
+        f"[bold]Tarefa:[/bold] reescrever resumo, experiências e projetos no padrão "
+        f"verbo de ação + feito + resultado + tecnologia, usando termos de {len(conjunto)} vaga(s)\n"
+        "[bold]Dados que vão no prompt:[/bold]\n" + "\n".join(f"  • {d}" for d in dados_enviados(perfil)),
+        title="Autorização de uso de IA (RF-IA-02)", border_style="magenta",
+    ))
+    if not typer.confirm("Autorizar e gerar o prompt?"):
+        console.print("Uso de IA não autorizado; nada foi gerado.")
+        raise typer.Exit(0)
+
+    prompt = montar_prompt(perfil, termos, motor)
+    destino = diretorio_dados() / "saidas" / f"prompt-reescrita-{foco or 'geral'}-{motor}.md"
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    destino.write_text(prompt, encoding="utf-8")
+    console.print(f"[green]Prompt gerado em[/green] {destino}")
+    console.print(
+        "Cole o conteúdo no "
+        + ("Claude" if motor == "claude" else "Gemini")
+        + ", revise a resposta e aplique no perfil só o que for verdadeiro "
+        "(frases [A CONFIRMAR] exigem sua confirmação — RN-02)."
+    )
 
 
 if __name__ == "__main__":

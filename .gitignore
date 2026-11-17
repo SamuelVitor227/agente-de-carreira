@@ -15,6 +15,13 @@ dados-pessoais/
 curriculos/
 data/
 
+# Currículos e documentos pessoais em qualquer pasta (ex.: docs/Curriculo_*.pdf)
+[Cc]urriculo*
+[Cc]urrículo*
+Curriculo_*
+CV_*
+cv_*
+
 # Python
 __pycache__/
 *.py[cod]

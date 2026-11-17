@@ -35,6 +35,11 @@ Agente de IA para gestão de carreira: otimização de currículo, perfil no Lin
 | RF-PM-03 | Experiência com cargo, empresa, vínculo, período, local, modelo de trabalho, responsabilidades, conquistas e tecnologias | ✅ Implementado |
 | RF-PM-04 | Banco de conquistas reutilizáveis (verbo de ação, resultado com número, tecnologias, competências, evidência) | ✅ Implementado |
 | RF-PM-05 | Experiências fora de TI e projetos acadêmicos com competências transferíveis | ✅ Implementado |
+| RF-PM-06 | Versionamento do perfil-mestre com histórico de mudanças e restauração | ✅ Implementado |
+| RF-PM-07 | Validação de completude e consistência (datas sobrepostas, lacunas, campos por plataforma, duplicatas) | ✅ Implementado |
+| RF-CV-01 | Conjunto de vagas-alvo por foco (padrão 30) com extração de termos mais frequentes (motor local) | ✅ Implementado |
+| RF-CV-02 | Relatório de lacunas em três grupos (já no CV / tem mas não aparece / não tem) | ✅ Implementado |
+| RF-CV-03 | Reescrita de resumo, experiências e projetos em modo copiloto, com autorização de uso de IA (RF-IA-02) | ✅ Implementado |
 
 ## Como usar
 
@@ -55,6 +60,12 @@ uv run agente importar meu-cv.pdf     # importa CV (PDF/DOCX/ZIP do LinkedIn/TXT
 uv run agente rascunhos               # lista itens importados pendentes de confirmação
 uv run agente experiencia adicionar   # registra experiência (aceita fora de TI e projetos acadêmicos)
 uv run agente conquista adicionar     # adiciona conquista ao banco de conquistas
+uv run agente perfil validar          # checa completude e consistência (RF-PM-07)
+uv run agente perfil versoes          # histórico de versões; restaure com 'perfil restaurar N'
+uv run agente vaga adicionar          # salva vaga-alvo (descrição por arquivo ou colada)
+uv run agente cv termos --foco X      # termos mais frequentes do conjunto de vagas
+uv run agente cv lacunas              # relatório de lacunas em 3 grupos
+uv run agente cv reescrever           # gera prompt de reescrita p/ Claude/Gemini (com autorização)
 ```
 
 Os dados ficam em `data/perfil-mestre.json` (fora do git), configurável pela variável `AGENTE_CARREIRA_DATA`.

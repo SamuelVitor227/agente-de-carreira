@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 
 from .models import PerfilMestre
+from .versionamento import arquivar_versao
 
 ARQUIVO_PERFIL = "perfil-mestre.json"
 
@@ -41,6 +42,7 @@ def salvar_perfil(perfil: PerfilMestre) -> Path:
     perfil.tocar()
     caminho = caminho_perfil()
     caminho.parent.mkdir(parents=True, exist_ok=True)
+    arquivar_versao(caminho)  # RF-PM-06: a versão anterior vai para o histórico
     caminho.write_text(
         perfil.model_dump_json(indent=2), encoding="utf-8"
     )
