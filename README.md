@@ -60,6 +60,12 @@ Agente de IA para gestão de carreira: otimização de currículo, perfil no Lin
 | RF-LI-07 | Ajustes de perfil: localização, URL personalizada validada, contato, Em destaque, certificações, idiomas | ✅ Implementado |
 | RF-LI-08 | Rodada de edições com desligar/religar o compartilhamento de atualizações | ✅ Implementado |
 | RF-LI-09 | Até 20 alertas de vagas diários por e-mail, espelhando as buscas | ✅ Implementado |
+| RF-LI-10 | Perfil secundário em inglês: pacote de tradução com autorização de IA e aprovação campo a campo | ✅ Implementado |
+| RF-LI-11 | Rascunhos de pedido de recomendação e de nota de convite (≤300 caracteres), envio manual | ✅ Implementado |
+| RF-LI-12 | Pauta e rascunhos de publicações a partir dos projetos do perfil e dos repositórios públicos do GitHub; publicação manual e só após aprovação | ✅ Implementado |
+| RF-LI-13 | Antes × depois com contagem de caracteres e aprovação campo a campo | ✅ Implementado |
+| RF-LI-14 | Log de cada alteração (data, campo, valor anterior e novo) com reversão | ✅ Implementado |
+| RF-LI-15 | Reauditoria a cada 30 dias ou quando o perfil-mestre mudar, com divergências LinkedIn × CV | ✅ Implementado |
 
 ## Como usar
 
@@ -99,7 +105,17 @@ uv run agente candidatura registrar --vaga 1 --foco backend-dotnet  # guarda o C
 uv run agente li auditar                 # auditoria do LinkedIn (checklist Anexo A)
 uv run agente li titulo / sobre / experiencias / competencias       # textos do LinkedIn
 uv run agente li open-to-work / ajustes / alertas / rodada          # pacotes e passo a passo
+uv run agente li sincronizar export.zip  # estado real do LinkedIn pela exportação oficial
+uv run agente li propor                  # antes × depois e aprovação campo a campo
+uv run agente li log / aplicado ID / reverter ID   # log de alterações com reversão
+uv run agente li reauditar               # reauditoria (30 dias ou perfil mudou) e divergências LinkedIn × CV
+uv run agente li ingles preparar / registrar resposta.md --motor claude   # perfil em inglês
+uv run agente li recomendacao / convite  # rascunhos de mensagens, envio manual
+uv run agente li pauta                   # pauta de posts com seus repositórios públicos do GitHub
+uv run agente li post rascunho N --ia claude / editar / aprovar / publicado   # posts só com aprovação
 ```
+
+A pauta lê seus repositórios pelo [GitHub CLI](https://cli.github.com) (`gh auth login`), somente leitura; repositórios privados e forks ficam de fora.
 
 Os dados ficam em `data/perfil-mestre.json` (fora do git), configurável pela variável `AGENTE_CARREIRA_DATA`.
 

@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 
 from ..models import PerfilMestre
 from ..storage import diretorio_dados
+from .estado import carregar_estado
 from .limites import LIMITES
 
 ARQUIVO_AUDITORIA = "linkedin-auditoria.json"
@@ -148,6 +149,8 @@ def auditar(perfil: PerfilMestre) -> list[ItemAuditoria]:
     """Checklist completo com status salvo + verificações automáticas, pendências primeiro por impacto."""
     salva = carregar_auditoria()
     automaticas = _verificacoes_automaticas(perfil)
+    if any(campo.startswith("en:") for campo in carregar_estado().campos):
+        automaticas[16] = "perfil em inglês com campos aplicados (veja 'agente li log')"
     itens = [
         ItemAuditoria(
             numero=item.numero,

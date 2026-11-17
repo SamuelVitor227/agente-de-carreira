@@ -17,4 +17,5 @@ LIMITES = {
     "url_trocas_por_semestre": 5,
     "nota_convite": 300,           # RF-LI-11
     "alertas": 20,                 # RF-LI-09
+    "publicacao": 3000,            # RF-LI-12, texto de um post
 }

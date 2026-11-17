@@ -13,8 +13,10 @@ from pathlib import Path
 
 import typer
 from rich.console import Console
+from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
+from rich.text import Text
 
 from .importadores import importar_arquivo
 from .importadores.mesclar import aplicar_importacao
@@ -40,7 +42,11 @@ conquista_app = typer.Typer(help="Banco de conquistas reutilizáveis (RF-PM-04).
 vaga_app = typer.Typer(help="Vagas-alvo para análise (RF-CV-01).", no_args_is_help=True)
 cv_app = typer.Typer(help="Otimização do currículo (RF-CV-01 a RF-CV-14).", no_args_is_help=True)
 candidatura_app = typer.Typer(help="Candidaturas e CV enviado (RF-CV-10, RF-CV-14).", no_args_is_help=True)
-li_app = typer.Typer(help="LinkedIn em modo copiloto (RF-LI-01 a RF-LI-09).", no_args_is_help=True)
+li_app = typer.Typer(help="LinkedIn em modo copiloto (RF-LI-01 a RF-LI-15).", no_args_is_help=True)
+ingles_app = typer.Typer(help="Perfil secundário em inglês (RF-LI-10).", no_args_is_help=True)
+post_app = typer.Typer(help="Publicações sobre projetos, publicadas só com sua aprovação (RF-LI-12).", no_args_is_help=True)
+li_app.add_typer(ingles_app, name="ingles")
+li_app.add_typer(post_app, name="post")
 app.add_typer(perfil_app, name="perfil")
 app.add_typer(experiencia_app, name="experiencia")
 app.add_typer(conquista_app, name="conquista")
@@ -74,6 +80,17 @@ def _prompt_multilinha(rotulo: str) -> list[str]:
         if not linha:
             return itens
         itens.append(linha)
+
+
+def _autorizar_ia(motor: str, tarefa: str, dados: list[str]) -> bool:
+    """Aviso do motor, da tarefa e dos dados enviados, com autorização a cada uso (RF-IA-02, RN-14)."""
+    console.print(Panel(
+        f"[bold]Motor:[/bold] {escape(motor)} (sua assinatura; você cola o prompt manualmente)\n"
+        f"[bold]Tarefa:[/bold] {escape(tarefa)}\n"
+        "[bold]Dados que vão no prompt:[/bold]\n" + "\n".join(f"  • {escape(d)}" for d in dados),
+        title="Autorização de uso de IA (RF-IA-02)", border_style="magenta",
+    ))
+    return typer.confirm("Autorizar e gerar o prompt?")
 
 
 # ---------------------------------------------------------------- perfil
@@ -739,15 +756,11 @@ def cv_reescrever(
     conjunto = _conjunto_ou_sai(foco, limite)
     termos = extrair_termos(conjunto)
 
-    # RF-IA-02 / RN-14: aviso do motor, da tarefa e dos dados, com autorização a cada uso.
-    console.print(Panel(
-        f"[bold]Motor:[/bold] {motor} (sua assinatura; você cola o prompt manualmente)\n"
-        f"[bold]Tarefa:[/bold] reescrever resumo, experiências e projetos no padrão "
-        f"verbo de ação + feito + resultado + tecnologia, usando termos de {len(conjunto)} vaga(s)\n"
-        "[bold]Dados que vão no prompt:[/bold]\n" + "\n".join(f"  • {d}" for d in dados_enviados(perfil)),
-        title="Autorização de uso de IA (RF-IA-02)", border_style="magenta",
-    ))
-    if not typer.confirm("Autorizar e gerar o prompt?"):
+    tarefa = (
+        "reescrever resumo, experiências e projetos no padrão verbo de ação + feito + resultado + "
+        f"tecnologia, usando termos de {len(conjunto)} vaga(s)"
+    )
+    if not _autorizar_ia(motor, tarefa, dados_enviados(perfil)):
         console.print("Uso de IA não autorizado; nada foi gerado.")
         raise typer.Exit(0)
 
@@ -1203,6 +1216,563 @@ def li_rodada() -> None:
     console.print("[bold]Rodada de edições do LinkedIn (copiloto):[/bold]")
     for i, passo in enumerate(passos_rodada(pendentes_altas), 1):
         console.print(f"  {i}. {passo}")
+
+
+# ---------------------------------------------------------------- LinkedIn: aprovação, log e reauditoria
+
+def _cargo_alvo(perfil: PerfilMestre, cargo: str | None) -> str:
+    cargo_alvo = (cargo or typer.prompt("Cargo-alvo do título", default=perfil.objetivo or "")).strip()
+    if not cargo_alvo:
+        console.print("[red]Informe o cargo-alvo.[/red]")
+        raise typer.Exit(1)
+    return cargo_alvo
+
+
+def _ler_texto_editado(resposta: str) -> str:
+    """Aceita o texto digitado ou o caminho de um arquivo .txt/.md com o texto."""
+    caminho = Path(resposta.strip().strip('"'))
+    try:
+        if caminho.suffix.lower() in {".txt", ".md"} and caminho.is_file():
+            return caminho.read_text(encoding="utf-8").strip()
+    except OSError:
+        pass
+    return resposta.strip()
+
+
+def _curto(texto: str | None, tamanho: int = 40) -> str:
+    texto = (texto or "").replace("\n", " ")
+    return texto if len(texto) <= tamanho else texto[: tamanho - 1] + "…"
+
+
+def _fluxo_aprovacao(propostas, motor: str | None = None) -> None:
+    """Antes × depois com contagem de caracteres; aprovar, editar, rejeitar ou pular campo a campo (RF-LI-13)."""
+    from .linkedin.estado import (
+        carregar_estado,
+        carregar_log,
+        marcar_aplicado,
+        registrar_aprovacao,
+        salvar_estado,
+        salvar_log,
+    )
+    from .linkedin.propostas import limite_do_campo, validar_texto
+
+    estado = carregar_estado()
+    log = carregar_log()
+    aprovadas = aplicadas = rejeitadas = 0
+    for i, p in enumerate(propostas, 1):
+        limite = limite_do_campo(p.campo)
+        sufixo = f"/{limite}" if limite else ""
+        antes = p.anterior or ""
+        console.print(Panel(
+            Text(antes) if antes else Text("(vazio ou desconhecido)", style="dim"),
+            title=f"{i}/{len(propostas)} · {escape(p.rotulo)} — ANTES · {len(antes)}{sufixo} caracteres",
+            border_style="red",
+        ))
+        novo = p.novo
+        while True:
+            problemas = validar_texto(p.campo, novo)
+            console.print(Panel(
+                Text(novo), title=f"DEPOIS · {len(novo)}{sufixo} caracteres",
+                border_style="yellow" if problemas else "green",
+            ))
+            for problema in problemas:
+                console.print(f"  [red]• {escape(problema)}[/red]")
+            escolha = typer.prompt("[a]provar, [e]ditar, [r]ejeitar ou [p]ular").lstrip("﻿").strip().lower()[:1]
+            if escolha not in {"a", "e", "r", "p"}:
+                console.print("Opção inválida.")
+                continue
+            if escolha == "e":
+                novo = _ler_texto_editado(typer.prompt("Novo texto (ou caminho de um arquivo .txt/.md)"))
+                continue
+            if escolha == "a" and problemas:
+                console.print("[red]Não dá para aprovar com problemas pendentes — edite o texto.[/red]")
+                continue
+            break
+
+        if escolha == "r":
+            rejeitadas += 1
+            continue
+        if escolha == "p":
+            continue
+
+        entrada = registrar_aprovacao(log, p.campo, p.anterior, novo, motor=motor)
+        salvar_log(log)
+        aprovadas += 1
+        console.print(f"[green]Aprovado (log {entrada.id}).[/green] Copie o texto abaixo e cole no LinkedIn:")
+        console.print(novo, markup=False, highlight=False)
+        if typer.confirm("Já colou e salvou este campo no LinkedIn?", default=False):
+            marcar_aplicado(log, estado, entrada.id)
+            salvar_log(log)
+            salvar_estado(estado)
+            aplicadas += 1
+
+    console.print(f"\n[bold]Resumo:[/bold] {aprovadas} aprovada(s), {aplicadas} aplicada(s), {rejeitadas} rejeitada(s).")
+    if aprovadas > aplicadas:
+        console.print(
+            f"{aprovadas - aplicadas} aprovada(s) aguardando aplicação: depois de colar no LinkedIn, rode "
+            "'agente li aplicado <id>' (lista em 'agente li log --pendentes')."
+        )
+
+
+@li_app.command("sincronizar")
+def li_sincronizar(
+    arquivo: Path = typer.Argument(..., exists=True, readable=True, help="ZIP de 'Obter uma cópia dos seus dados' do LinkedIn."),
+) -> None:
+    """Atualiza o estado conhecido do LinkedIn pela exportação oficial (base do antes × depois)."""
+    import zipfile
+
+    from .linkedin.estado import carregar_estado, salvar_estado, sincronizar_exportacao
+    from .linkedin.propostas import rotulo_do_campo
+
+    estado = carregar_estado()
+    try:
+        lidos = sincronizar_exportacao(estado, arquivo)
+    except zipfile.BadZipFile:
+        console.print("[red]O arquivo não é um ZIP válido da exportação do LinkedIn.[/red]")
+        raise typer.Exit(1)
+    salvar_estado(estado)
+    console.print(f"[green]Estado do LinkedIn sincronizado:[/green] {len(lidos)} campo(s) lido(s).")
+    for campo in lidos:
+        console.print(f"  • {escape(rotulo_do_campo(campo))}")
+
+
+@li_app.command("propor")
+def li_propor(
+    foco: str = typer.Option("backend-dotnet", "--foco"),
+    cargo: str | None = typer.Option(None, "--cargo", help="Cargo-alvo do título."),
+    opcao: int = typer.Option(1, "--opcao", help="Qual das opções de 'agente li titulo' usar."),
+) -> None:
+    """Propõe as alterações com antes × depois e aprovação campo a campo (RF-LI-13, RF-LI-14)."""
+    from .linkedin.estado import carregar_estado
+    from .linkedin.propostas import gerar_propostas
+
+    perfil = carregar_perfil()
+    estado = carregar_estado()
+    cargo_alvo = _cargo_alvo(perfil, cargo)
+    try:
+        propostas = gerar_propostas(perfil, estado, foco, cargo_alvo, opcao_titulo=opcao)
+    except ValueError as erro:
+        console.print(f"[red]{escape(str(erro))}[/red]")
+        raise typer.Exit(1)
+    if not propostas:
+        console.print("[green]Nada a propor: o LinkedIn conhecido já bate com o perfil-mestre.[/green]")
+        return
+    if estado.sincronizado_em is None:
+        console.print("[yellow]Estado do LinkedIn nunca sincronizado: o 'antes' pode estar vazio. "
+                      "Para o antes real, rode 'agente li sincronizar <exportação.zip>'.[/yellow]")
+    console.print("[yellow]Lembrete (RF-LI-08): desligue 'Compartilhar atualizações do perfil' antes de uma rodada grande de edições.[/yellow]")
+    _fluxo_aprovacao(propostas)
+
+
+@li_app.command("log")
+def li_log(
+    pendentes: bool = typer.Option(False, "--pendentes", help="Só as aprovadas que ainda não foram aplicadas."),
+) -> None:
+    """Log de alterações do LinkedIn: data, campo, valor anterior e novo (RF-LI-14)."""
+    from .linkedin.estado import carregar_log
+    from .linkedin.propostas import rotulo_do_campo
+
+    entradas = [e for e in carregar_log().entradas if not pendentes or e.status == "aprovado"]
+    if not entradas:
+        console.print("Nenhuma entrada no log." if not pendentes else "Nenhuma alteração aguardando aplicação.")
+        return
+    tabela = Table(title=f"Log do LinkedIn ({len(entradas)})")
+    for col in ("ID", "Aprovado em", "Campo", "Tipo", "Status", "Antes → depois"):
+        tabela.add_column(col, overflow="fold")
+    for e in reversed(entradas):
+        status = e.status + (f" · {e.motor}" if e.motor else "")
+        tabela.add_row(
+            e.id, f"{e.aprovado_em:%d/%m/%Y %H:%M}", Text(rotulo_do_campo(e.campo)), e.tipo, status,
+            Text(f"{_curto(e.anterior) or '(vazio)'} → {_curto(e.novo) or '(vazio)'}"),
+        )
+    console.print(tabela)
+    console.print("Reverta uma alteração aplicada com 'agente li reverter <id>'.")
+
+
+@li_app.command("aplicado")
+def li_aplicado(id_: str = typer.Argument(..., metavar="ID")) -> None:
+    """Marca como aplicada uma alteração aprovada que você já colou no LinkedIn (RF-LI-14)."""
+    from .linkedin.estado import carregar_estado, carregar_log, marcar_aplicado, salvar_estado, salvar_log
+
+    estado, log = carregar_estado(), carregar_log()
+    try:
+        entrada = marcar_aplicado(log, estado, id_)
+    except ValueError as erro:
+        console.print(f"[red]{escape(str(erro))}[/red]")
+        raise typer.Exit(1)
+    salvar_log(log)
+    salvar_estado(estado)
+    console.print(f"[green]Aplicada:[/green] {escape(entrada.campo)} ({entrada.id}).")
+
+
+@li_app.command("reverter")
+def li_reverter(id_: str = typer.Argument(..., metavar="ID")) -> None:
+    """Reverte uma alteração aplicada, com nova aprovação (RF-LI-14)."""
+    from .linkedin.estado import carregar_estado, carregar_log, marcar_aplicado, preparar_reversao, salvar_estado, salvar_log
+    from .linkedin.propostas import rotulo_do_campo
+
+    estado, log = carregar_estado(), carregar_log()
+    try:
+        reversao = preparar_reversao(log, id_)
+    except ValueError as erro:
+        console.print(f"[red]{escape(str(erro))}[/red]")
+        raise typer.Exit(1)
+    rotulo = rotulo_do_campo(reversao.campo)
+    console.print(Panel(Text(reversao.anterior or ""), title=f"{escape(rotulo)} — ATUAL · {len(reversao.anterior or '')} caracteres", border_style="red"))
+    console.print(Panel(Text(reversao.novo) if reversao.novo else Text("(campo vazio)", style="dim"),
+                        title=f"VOLTA PARA · {len(reversao.novo)} caracteres", border_style="green"))
+    if not typer.confirm("Aprovar a reversão?"):
+        console.print("Nada foi alterado.")
+        raise typer.Exit(0)
+    salvar_log(log)
+    if reversao.novo:
+        console.print("Cole o valor abaixo no LinkedIn:")
+        console.print(reversao.novo, markup=False, highlight=False)
+    else:
+        console.print("Apague o conteúdo deste campo no LinkedIn.")
+    if typer.confirm("Já aplicou a reversão no LinkedIn?", default=False):
+        marcar_aplicado(log, estado, reversao.id)
+        salvar_log(log)
+        salvar_estado(estado)
+        console.print(f"[green]Reversão aplicada (log {reversao.id}).[/green]")
+    else:
+        console.print(f"Reversão aprovada; marque depois com 'agente li aplicado {reversao.id}'.")
+
+
+@li_app.command("reauditar")
+def li_reauditar(
+    verificar: bool = typer.Option(False, "--verificar", help="Só verifica se a reauditoria está pendente (sai com 1 se estiver)."),
+) -> None:
+    """Reauditoria a cada 30 dias ou quando o perfil-mestre mudar, com divergências LinkedIn × CV (RF-LI-15)."""
+    from .linkedin.auditoria import auditar
+    from .linkedin.estado import (
+        carregar_estado,
+        divergencias,
+        reauditoria_pendente,
+        registrar_auditoria,
+        salvar_estado,
+    )
+
+    perfil = carregar_perfil()
+    estado = carregar_estado()
+    motivo = reauditoria_pendente(estado, perfil)
+    if verificar:
+        if motivo:
+            console.print(f"[yellow]Reauditoria pendente:[/yellow] {escape(motivo)}. Rode 'agente li reauditar'.")
+            raise typer.Exit(1)
+        console.print("[green]Auditoria do LinkedIn em dia.[/green]")
+        raise typer.Exit(0)
+
+    if motivo:
+        console.print(f"[yellow]Motivo da reauditoria:[/yellow] {escape(motivo)}.")
+    achados = divergencias(estado, perfil)
+    if achados:
+        tabela = Table(title=f"Divergências LinkedIn × CV ({len(achados)})")
+        tabela.add_column("Tipo")
+        tabela.add_column("Divergência", overflow="fold")
+        for d in achados:
+            tabela.add_row(d.tipo, Text(d.mensagem))
+        console.print(tabela)
+    else:
+        console.print("[green]Nenhuma divergência entre o LinkedIn conhecido e o CV.[/green]")
+    if estado.sincronizado_em:
+        console.print(f"[dim]Estado do LinkedIn sincronizado em {estado.sincronizado_em:%d/%m/%Y}.[/dim]")
+    pendentes = [i for i in auditar(perfil) if i.status == "pendente"]
+    console.print(f"Checklist do Anexo A: {len(pendentes)} pendência(s) — detalhes em 'agente li auditar'.")
+    registrar_auditoria(estado, perfil)
+    salvar_estado(estado)
+    console.print("[green]Auditoria registrada.[/green] Próxima: em até 30 dias ou quando o perfil-mestre mudar.")
+
+
+# ---------------------------------------------------------------- LinkedIn: perfil em inglês (RF-LI-10)
+
+@ingles_app.command("preparar")
+def ingles_preparar(
+    foco: str = typer.Option("backend-dotnet", "--foco"),
+    cargo: str | None = typer.Option(None, "--cargo", help="Cargo-alvo do título."),
+    opcao: int = typer.Option(1, "--opcao", help="Qual das opções de 'agente li titulo' traduzir."),
+    motor: str = typer.Option("claude", "--motor", help="claude ou gemini."),
+) -> None:
+    """Monta o pacote de tradução do perfil para inglês, com autorização de IA (RF-LI-10)."""
+    from .analise.reescrita import MOTORES
+    from .linkedin.ingles import dados_enviados, montar_prompt, textos_fonte
+
+    if motor not in MOTORES:
+        console.print(f"[red]Motor desconhecido: {escape(motor)}. Use um de: {', '.join(MOTORES)}.[/red]")
+        raise typer.Exit(1)
+    perfil = carregar_perfil()
+    fontes = textos_fonte(perfil, foco, _cargo_alvo(perfil, cargo), opcao_titulo=opcao)
+    if not fontes:
+        console.print("[yellow]Perfil sem material para traduzir (título, Sobre ou experiências).[/yellow]")
+        raise typer.Exit(1)
+    tarefa = "traduzir para inglês o título, o Sobre e as experiências do LinkedIn (perfil secundário)"
+    if not _autorizar_ia(motor, tarefa, dados_enviados(fontes)):
+        console.print("Uso de IA não autorizado; nada foi gerado.")
+        raise typer.Exit(0)
+    destino = diretorio_dados() / "saidas" / f"prompt-linkedin-en-{motor}.md"
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    destino.write_text(montar_prompt(fontes, motor), encoding="utf-8")
+    console.print(f"[green]Prompt gerado em[/green] {destino}")
+    console.print(
+        f"Cole no {motor.capitalize()}, salve a resposta num arquivo .md e rode: "
+        f"agente li ingles registrar <resposta.md> --motor {motor}"
+    )
+
+
+@ingles_app.command("registrar")
+def ingles_registrar(
+    arquivo: Path = typer.Argument(..., exists=True, readable=True, help="Resposta do motor com as linhas '### CAMPO: en:...'."),
+    motor: str = typer.Option(..., "--motor", help="Motor que fez a tradução (claude ou gemini)."),
+) -> None:
+    """Traz a tradução de volta e aprova campo a campo antes de colar no perfil em inglês (RF-LI-10, RF-LI-13)."""
+    from .linkedin.estado import carregar_estado
+    from .linkedin.ingles import PASSOS_PERFIL_INGLES, ler_resposta
+    from .linkedin.propostas import propostas_de_textos
+
+    textos = ler_resposta(arquivo.read_text(encoding="utf-8"))
+    if not textos:
+        console.print("[red]Nenhum campo reconhecido — a resposta precisa manter as linhas '### CAMPO: en:...'.[/red]")
+        raise typer.Exit(1)
+    propostas = propostas_de_textos(carregar_estado(), textos)
+    if not propostas:
+        console.print("[green]Todos os campos já estão iguais ao perfil em inglês conhecido.[/green]")
+        return
+    console.print("[bold]Como criar ou atualizar o perfil em inglês:[/bold]")
+    for i, passo in enumerate(PASSOS_PERFIL_INGLES, 1):
+        console.print(f"  {i}. {passo}")
+    _fluxo_aprovacao(propostas, motor=motor)
+
+
+# ---------------------------------------------------------------- LinkedIn: recomendação e convite (RF-LI-11)
+
+@li_app.command("recomendacao")
+def li_recomendacao(
+    nome: str = typer.Option(..., "--nome", help="Como chamar a pessoa (fica só na tela, não é salvo)."),
+    relacao: str = typer.Option(..., "--relacao", help="orientador, professor ou colega"),
+    contexto: str = typer.Option(..., "--contexto", help="Ex.: 'o TCC sobre recomendação de vagas'"),
+) -> None:
+    """Rascunho de pedido de recomendação; o envio é manual (RF-LI-11)."""
+    from .linkedin.mensagens import FRASE_RELACAO, rascunho_recomendacao
+
+    if relacao not in FRASE_RELACAO:
+        console.print(f"[red]Relação inválida: {escape(relacao)}. Use: {', '.join(FRASE_RELACAO)}.[/red]")
+        raise typer.Exit(1)
+    perfil = carregar_perfil()
+    pontos: list[str] = []
+    if perfil.projetos:
+        for i, p in enumerate(perfil.projetos, 1):
+            console.print(f"  {i}. {escape(p.nome)}")
+        escolha = typer.prompt("Projetos que a pessoa acompanhou (números separados por vírgula; vazio = nenhum)",
+                               default="", show_default=False)
+        for parte in _lista(escolha):
+            if not parte.isdigit() or not 1 <= int(parte) <= len(perfil.projetos):
+                console.print(f"[red]Projeto {escape(parte)} não existe.[/red]")
+                raise typer.Exit(1)
+            proj = perfil.projetos[int(parte) - 1]
+            pontos.append(proj.nome + (f": {proj.descricao}" if proj.descricao else ""))
+    texto = rascunho_recomendacao(perfil, nome, relacao, contexto, pontos)  # type: ignore[arg-type]
+    console.print(Panel(Text(texto), title=f"Pedido de recomendação · {len(texto)} caracteres", border_style="cyan"))
+    console.print("Revise, personalize e envie você mesmo pelo LinkedIn (RN-04, RN-11). O rascunho não é salvo.")
+
+
+@li_app.command("convite")
+def li_convite(
+    nome: str = typer.Option(..., "--nome", help="Como chamar a pessoa (não é salvo)."),
+    motivo: str = typer.Option(..., "--motivo", help="Por que conectar, em uma frase."),
+) -> None:
+    """Nota de convite com até 300 caracteres; o envio é manual (RF-LI-11)."""
+    from .linkedin.mensagens import rascunho_convite, validar_convite
+
+    texto = rascunho_convite(carregar_perfil(), nome, motivo)
+    problemas = validar_convite(texto)
+    console.print(Panel(Text(texto), title=f"Nota de convite · {len(texto)}/300 caracteres",
+                        border_style="red" if problemas else "cyan"))
+    for problema in problemas:
+        console.print(f"[red]{escape(problema)}[/red]")
+    if problemas:
+        raise typer.Exit(1)
+    console.print("Copie e envie você mesmo junto do convite (RN-04, RN-11). A nota não é salva.")
+
+
+# ---------------------------------------------------------------- LinkedIn: publicações (RF-LI-12)
+
+@li_app.command("pauta")
+def li_pauta(
+    sem_github: bool = typer.Option(False, "--sem-github", help="Usa só os projetos do perfil-mestre."),
+) -> None:
+    """Pauta de publicações a partir dos projetos do perfil e dos repositórios públicos do GitHub (RF-LI-12)."""
+    from .linkedin.github import GitHubIndisponivel, listar_repositorios
+    from .linkedin.publicacoes import montar_pauta, salvar_pauta
+
+    perfil = carregar_perfil()
+    repos = []
+    if not sem_github:
+        try:
+            repos = listar_repositorios()
+        except GitHubIndisponivel as erro:
+            console.print(f"[yellow]GitHub indisponível ({escape(str(erro))}); pauta só com o perfil-mestre.[/yellow]")
+    pauta = montar_pauta(perfil, repos)
+    if not pauta.itens:
+        console.print("[yellow]Nenhum projeto no perfil-mestre nem repositório público no GitHub.[/yellow]")
+        raise typer.Exit(1)
+    salvar_pauta(pauta)
+    tabela = Table(title=f"Pauta de publicações ({len(pauta.itens)})")
+    for col in ("#", "Projeto", "Tipo", "Origem", "Tecnologias", "Atualizado"):
+        tabela.add_column(col, overflow="fold")
+    for i, item in enumerate(pauta.itens, 1):
+        tabela.add_row(
+            str(i), Text(item.titulo), item.tipo, item.origem, Text(", ".join(item.tecnologias)),
+            f"{item.atualizado_em:%d/%m/%Y}" if item.atualizado_em else "",
+        )
+    console.print(tabela)
+    console.print("Gere um rascunho com 'agente li post rascunho N'. Repositórios privados e forks ficam de fora.")
+
+
+@post_app.command("rascunho")
+def post_rascunho(
+    numero: int = typer.Argument(..., help="Número do item em 'agente li pauta'."),
+    ia: str | None = typer.Option(None, "--ia", help="claude ou gemini: gera também o prompt de polimento (com autorização)."),
+) -> None:
+    """Rascunho de publicação só com fatos registrados; polimento opcional com IA (RF-LI-12)."""
+    from .analise.reescrita import MOTORES
+    from .linkedin.github import ler_readme
+    from .linkedin.publicacoes import (
+        Publicacao,
+        carregar_pauta,
+        carregar_publicacoes,
+        dados_enviados_polimento,
+        prompt_polimento,
+        rascunho_publicacao,
+        salvar_publicacoes,
+    )
+
+    pauta = carregar_pauta()
+    if not pauta.itens:
+        console.print("[red]Pauta vazia — rode 'agente li pauta' primeiro.[/red]")
+        raise typer.Exit(1)
+    if not 1 <= numero <= len(pauta.itens):
+        console.print(f"[red]Item {numero} não existe na pauta ({len(pauta.itens)} itens).[/red]")
+        raise typer.Exit(1)
+    if ia and ia not in MOTORES:
+        console.print(f"[red]Motor desconhecido: {escape(ia)}. Use um de: {', '.join(MOTORES)}.[/red]")
+        raise typer.Exit(1)
+
+    item = pauta.itens[numero - 1]
+    texto = rascunho_publicacao(item)
+    colecao = carregar_publicacoes()
+    pub = Publicacao(titulo=item.titulo, texto=texto)
+    colecao.itens.append(pub)
+    salvar_publicacoes(colecao)
+    console.print(Panel(Text(texto), title=f"Rascunho {pub.id} · {len(texto)}/3000 caracteres", border_style="cyan"))
+
+    if ia:
+        readme = ler_readme(item.url) if item.url else None
+        tarefa = f"melhorar o texto do post sobre '{item.titulo}' sem inventar fatos"
+        if _autorizar_ia(ia, tarefa, dados_enviados_polimento(item, readme is not None)):
+            destino = diretorio_dados() / "saidas" / "posts" / f"prompt-post-{pub.id}-{ia}.md"
+            destino.parent.mkdir(parents=True, exist_ok=True)
+            destino.write_text(prompt_polimento(item, texto, readme, ia), encoding="utf-8")
+            console.print(f"[green]Prompt gerado em[/green] {destino}")
+            console.print(f"Salve a resposta e rode: agente li post editar {pub.id} --arquivo <resposta.md> --motor {ia}")
+        else:
+            console.print("Uso de IA não autorizado; fica o rascunho local.")
+    console.print(f"Para publicar: revise, aprove com 'agente li post aprovar {pub.id}' e publique você mesmo no LinkedIn.")
+
+
+@post_app.command("editar")
+def post_editar(
+    id_: str = typer.Argument(..., metavar="ID"),
+    arquivo: Path = typer.Option(..., "--arquivo", exists=True, readable=True, help="Arquivo com o novo texto do post."),
+    motor: str | None = typer.Option(None, "--motor", help="Motor que escreveu o texto (claude/gemini), se houver."),
+) -> None:
+    """Substitui o texto do rascunho (ex.: versão polida pela IA); volta a exigir aprovação."""
+    from .linkedin.publicacoes import carregar_publicacoes, editar_publicacao, salvar_publicacoes, validar_publicacao
+
+    colecao = carregar_publicacoes()
+    try:
+        pub = colecao.buscar(id_)
+        editar_publicacao(pub, arquivo.read_text(encoding="utf-8"), motor=motor)
+    except ValueError as erro:
+        console.print(f"[red]{escape(str(erro))}[/red]")
+        raise typer.Exit(1)
+    salvar_publicacoes(colecao)
+    problemas = validar_publicacao(pub.texto)
+    console.print(Panel(Text(pub.texto), title=f"{pub.id} · {len(pub.texto)}/3000 caracteres · escrito por: {pub.motor or 'você/agente'}",
+                        border_style="yellow" if problemas else "cyan"))
+    for problema in problemas:
+        console.print(f"[red]• {escape(problema)}[/red]")
+    console.print(f"Texto atualizado (rascunho). Aprove com 'agente li post aprovar {pub.id}'.")
+
+
+@post_app.command("listar")
+def post_listar() -> None:
+    """Lista os rascunhos e publicações."""
+    from .linkedin.publicacoes import carregar_publicacoes
+
+    colecao = carregar_publicacoes()
+    if not colecao.itens:
+        console.print("Nenhuma publicação. Comece com 'agente li pauta'.")
+        return
+    tabela = Table(title=f"Publicações ({len(colecao.itens)})")
+    for col in ("ID", "Projeto", "Status", "Escrito por", "Caracteres", "Criada em"):
+        tabela.add_column(col)
+    for p in colecao.itens:
+        tabela.add_row(p.id, Text(p.titulo), p.status, p.motor or "agente (local)", str(len(p.texto)), f"{p.criada_em:%d/%m/%Y}")
+    console.print(tabela)
+
+
+@post_app.command("aprovar")
+def post_aprovar(id_: str = typer.Argument(..., metavar="ID")) -> None:
+    """Aprova uma publicação para você publicar manualmente (RN-01)."""
+    from .linkedin.publicacoes import aprovar_publicacao, carregar_publicacoes, salvar_publicacoes, validar_publicacao
+
+    colecao = carregar_publicacoes()
+    try:
+        pub = colecao.buscar(id_)
+    except ValueError as erro:
+        console.print(f"[red]{escape(str(erro))}[/red]")
+        raise typer.Exit(1)
+    console.print(Panel(Text(pub.texto), title=f"{escape(pub.titulo)} · {len(pub.texto)}/3000 · escrito por: {pub.motor or 'agente (local)'}",
+                        border_style="cyan"))
+    if problemas := validar_publicacao(pub.texto):
+        for problema in problemas:
+            console.print(f"[red]• {escape(problema)}[/red]")
+        console.print(f"Corrija com 'agente li post editar {pub.id} --arquivo <texto.md>'.")
+        raise typer.Exit(1)
+    if not typer.confirm("Você aprova esta publicação para publicar no LinkedIn?"):
+        console.print("Não aprovada; continua como rascunho.")
+        raise typer.Exit(0)
+    try:
+        aprovar_publicacao(pub)
+    except ValueError as erro:
+        console.print(f"[red]{escape(str(erro))}[/red]")
+        raise typer.Exit(1)
+    salvar_publicacoes(colecao)
+    console.print(f"[green]Aprovada.[/green] Copie o texto abaixo, publique você mesmo no LinkedIn e depois rode "
+                  f"'agente li post publicado {pub.id}'.")
+    console.print(pub.texto, markup=False, highlight=False)
+
+
+@post_app.command("publicado")
+def post_publicado(id_: str = typer.Argument(..., metavar="ID")) -> None:
+    """Registra que você publicou uma publicação aprovada."""
+    from .linkedin.publicacoes import carregar_publicacoes, marcar_publicada, salvar_publicacoes
+
+    colecao = carregar_publicacoes()
+    try:
+        pub = colecao.buscar(id_)
+    except ValueError as erro:
+        console.print(f"[red]{escape(str(erro))}[/red]")
+        raise typer.Exit(1)
+    if not typer.confirm(f"Confirma que publicou '{pub.titulo}' no LinkedIn?"):
+        raise typer.Exit(0)
+    try:
+        marcar_publicada(pub)
+    except ValueError as erro:
+        console.print(f"[red]{escape(str(erro))}[/red]")
+        raise typer.Exit(1)
+    salvar_publicacoes(colecao)
+    console.print(f"[green]Registrada como publicada.[/green]")
 
 
 if __name__ == "__main__":
