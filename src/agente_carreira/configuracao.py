@@ -21,7 +21,7 @@ ARQUIVO_VAGAS_ANTIGO = "vagas-config.json"
 
 MODOS_PLATAFORMA = ("copiloto", "assistido", "leitura", "desligado")
 OPCOES_MOTOR = ("claude", "gemini", "local", "perguntar")
-EVENTOS = ("resumo_diario", "vaga_acima_limiar", "pedido_aprovacao", "falha_adaptador", "lembrete_funil")
+EVENTOS = ("resumo_diario", "vaga_acima_limiar", "pedido_aprovacao", "falha_adaptador", "lembrete_funil", "relatorio_semanal")
 
 # Modo padrão por plataforma (Anexo B da especificação).
 MODOS_PADRAO = {

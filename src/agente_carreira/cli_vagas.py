@@ -277,6 +277,12 @@ def vagas_rodada(
     elif resultado.pedido_ia:
         console.print(f"Justificativa escrita por IA na fila de aprovações: 'agente fila' (item ia:{resultado.pedido_ia}).")
     _notificar_rodada(resultado, central, config)
+    try:  # RNF-15: o painel de execução é atualizado a cada rodada; falha aqui não derruba a rodada
+        from .relatorios import salvar_painel_html
+
+        console.print(f"Painel atualizado: {salvar_painel_html()}")
+    except Exception as erro:  # noqa: BLE001
+        console.print(f"[yellow]Painel não atualizado: {escape(str(erro))}[/yellow]")
 
 
 def _notificar_rodada(resultado, central, config) -> None:

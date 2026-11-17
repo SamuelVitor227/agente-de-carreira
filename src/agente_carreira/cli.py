@@ -2125,6 +2125,12 @@ app.add_typer(contatos_app, name="contatos")
 app.command("candidatar")(candidatar)
 app.command("indicacao")(indicacao)
 
+from .cli_relatorios import exportar_dados, painel, relatorio_app  # noqa: E402
+
+app.command("painel")(painel)
+app.add_typer(relatorio_app, name="relatorio")
+app.command("exportar")(exportar_dados)
+
 
 @ia_app.command("motores")
 def ia_motores() -> None:
@@ -2229,22 +2235,34 @@ def ia_recusado(id_: str = typer.Argument(..., metavar="ID", help="ID do uso de 
 
 
 @app.command("aceite")
-def aceite() -> None:
-    """Confere o portão do MVP: critérios de aceitação CA-01 a CA-10 sobre os seus dados."""
-    from .aceite import verificar_mvp
+def aceite(
+    fase: str = typer.Option("todas", "--fase", help="1 (MVP: CA-01 a CA-10), 2 (CA-11 e CA-12) ou todas."),
+) -> None:
+    """Confere os portões: MVP (CA-01 a CA-10) e fase 2 (CA-11 e CA-12) sobre os seus dados."""
+    from .aceite import verificar_fase2, verificar_mvp
 
-    criterios = verificar_mvp()
-    tabela = Table(title="Portão do MVP — critérios de aceitação (seção 14)")
-    for col in ("CA", "Critério", "Status", "Detalhe"):
-        tabela.add_column(col, overflow="fold")
+    if fase not in ("1", "2", "todas"):
+        console.print("[red]Use --fase 1, 2 ou todas.[/red]")
+        raise typer.Exit(1)
+    portoes = []
+    if fase in ("1", "todas"):
+        portoes.append(("Portão do MVP — CA-01 a CA-10 (seção 14)", verificar_mvp()))
+    if fase in ("2", "todas"):
+        portoes.append(("Portão da fase 2 — CA-11 e CA-12", verificar_fase2()))
     cores = {"ok": "green", "pendente": "yellow", "falhou": "red", "manual": "cyan"}
-    for c in criterios:
-        tabela.add_row(c.codigo, Text(c.titulo), f"[{cores[c.status]}]{c.status}[/{cores[c.status]}]", Text(c.detalhe))
-    console.print(tabela)
-    ok = sum(1 for c in criterios if c.status == "ok")
-    console.print(f"[bold]{ok} de {len(criterios)} ok[/bold] · pendente = falta uso real para comprovar · "
+    todos = []
+    for titulo, criterios in portoes:
+        tabela = Table(title=titulo)
+        for col in ("CA", "Critério", "Status", "Detalhe"):
+            tabela.add_column(col, overflow="fold")
+        for c in criterios:
+            tabela.add_row(c.codigo, Text(c.titulo), f"[{cores[c.status]}]{c.status}[/{cores[c.status]}]", Text(c.detalhe))
+        console.print(tabela)
+        todos += criterios
+    ok = sum(1 for c in todos if c.status == "ok")
+    console.print(f"[bold]{ok} de {len(todos)} ok[/bold] · pendente = falta uso real para comprovar · "
                   "manual = a parte automática passou, falta a conferência indicada.")
-    if any(c.status == "falhou" for c in criterios):
+    if any(c.status == "falhou" for c in todos):
         raise typer.Exit(1)
 
 

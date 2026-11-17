@@ -282,3 +282,127 @@ def verificar_mvp() -> list[Criterio]:
             codigo = f"CA-{verificar.__name__[-2:]}"
             criterios.append(Criterio(codigo, "erro ao verificar", "falhou", f"{type(erro).__name__}: {erro}"))
     return criterios
+
+
+# ---------------------------------------------------------------- portão da fase 2: CA-11 e CA-12
+
+FORMULARIO_CA11 = """
+<form onsubmit="window.enviado = true; return false;">
+  <label for="n">Nome completo</label><input id="n">
+  <label for="e">E-mail</label><input id="e">
+  <label for="m">Mensagem</label><textarea id="m"></textarea>
+  <button type="submit" onclick="window.clicado = true">Enviar candidatura</button>
+</form>
+"""
+
+# Textos de teste do CA-12: cobrança de taxa e pedido de Pix em formas variadas.
+GOLPES_DE_TESTE = [
+    "Para participar é necessário pagar uma taxa de inscrição de R$ 49,90.",
+    "Cobramos taxa de cadastro única para liberar seu acesso às vagas.",
+    "Após a aprovação, faça um Pix de R$ 30 para garantir a vaga.",
+    "Envie o Pix para a chave abaixo e reserve sua entrevista.",
+    "Chave Pix: 31999990000 — o valor é devolvido no primeiro salário.",
+    "Taxa de treinamento obrigatória, paga no primeiro dia.",
+    "É preciso um depósito antecipado para o envio do material.",
+    "Compra obrigatória do kit inicial de trabalho (R$ 120).",
+    "Informe seus dados bancários e a senha do cartão para o cadastro na folha.",
+    "Pague a taxa administrativa via Pix para confirmar a contratação.",
+]
+# Controles: falam de Pix ou taxa sem pedir nada ao candidato.
+CONTROLES_CA12 = [
+    "Experiência com APIs de pagamento Pix e boletos em fintech.",
+    "Desenvolver integrações com o arranjo Pix do Banco Central.",
+]
+
+
+def _ca11(executar_navegador: bool = True) -> Criterio:
+    from .navegador import CampoParaPreencher, playwright_disponivel, preencher
+    from .operacao.auditoria import listar_acoes
+
+    titulo = "Parada antes do envio: o agente para na revisão e não envia sem confirmação"
+    envios = [a for a in listar_acoes() if a.acao == "enviar candidatura"]
+    sem_confirmacao = [a.id for a in envios if a.aprovado_em is None]
+    if sem_confirmacao:
+        return Criterio("CA-11", titulo, "falhou", f"Envios sem confirmação registrada no log: {sem_confirmacao[:3]}.")
+
+    automatico = "teste em formulário local não executado"
+    if executar_navegador:
+        if not playwright_disponivel():
+            return Criterio("CA-11", titulo, "pendente", "Playwright não instalado ('uv sync').")
+        from playwright.sync_api import sync_playwright
+
+        try:
+            with sync_playwright() as p:
+                browser = p.chromium.launch()
+                pagina = browser.new_page()
+                pagina.set_content(FORMULARIO_CA11)
+                campos = [CampoParaPreencher(id="nome", rotulo="Nome completo", valor="Teste", obrigatorio=True),
+                          CampoParaPreencher(id="email", rotulo="E-mail", valor="teste@example.com", obrigatorio=True),
+                          CampoParaPreencher(id="mensagem", rotulo="Mensagem", valor="Olá")]
+                resultado = preencher(pagina, campos, limite_acoes=10, intervalo_segundos=0, dormir=lambda _: None)
+                enviado = pagina.evaluate("Boolean(window.enviado || window.clicado)")
+                browser.close()
+        except Exception as erro:  # noqa: BLE001 - Chromium ausente
+            return Criterio("CA-11", titulo, "pendente",
+                            f"Chromium indisponível ({type(erro).__name__}); rode 'uv run playwright install chromium'.")
+        if enviado:
+            return Criterio("CA-11", titulo, "falhou", "No formulário de teste, o agente clicou em enviar.")
+        automatico = f"formulário de teste: {len(resultado.preenchidos)} campo(s) preenchido(s) e nenhum envio"
+
+    assistidos = [a for a in envios if a.modo == "assistido"]
+    if assistidos:
+        return Criterio("CA-11", titulo, "ok",
+                        f"{automatico}; {len(assistidos)} candidatura(s) real(is) no modo assistido, todas paradas na "
+                        f"revisão e enviadas só depois da sua confirmação ({len(envios)} envio(s) no log).")
+    return Criterio("CA-11", titulo, "manual",
+                    f"{automatico}. Falta conferir num formulário real: 'agente candidatar ID' numa vaga da Gupy "
+                    "(modo assistido) e veja que ele para na tela de revisão.")
+
+
+def _ca12() -> Criterio:
+    from .candidatar.regras import checar_candidatura
+    from .candidaturas import Candidaturas
+    from .configuracao import Limites
+    from .models import Contato, PerfilMestre
+    from .radar.filtros import sinais_risco
+    from .radar.modelos import VagaEncontrada, carregar_base
+
+    titulo = "Golpes: vagas com cobrança de taxa ou pedido de Pix são sinalizadas em 100% dos casos"
+    perdidos, sem_bloqueio = [], []
+    perfil = PerfilMestre(contato=Contato(nome="Teste", email="teste@example.com"))
+    for texto in GOLPES_DE_TESTE:
+        vaga = VagaEncontrada(titulo="Auxiliar administrativo", empresa="Empresa Teste", descricao=texto)
+        vaga.sinais = sinais_risco(vaga)
+        if not (vaga.risco and any(s.tipo in ("golpe:taxa", "golpe:pix") for s in vaga.sinais)):
+            perdidos.append(texto)
+        elif not any(b.tipo == "golpe" and not b.contornavel
+                     for b in checar_candidatura(Candidaturas(), vaga, perfil, Limites())):
+            sem_bloqueio.append(texto)
+    if perdidos:
+        return Criterio("CA-12", titulo, "falhou",
+                        f"{len(perdidos)} de {len(GOLPES_DE_TESTE)} não sinalizada(s), ex.: {perdidos[0]!r}.")
+    if sem_bloqueio:
+        return Criterio("CA-12", titulo, "falhou", f"Sinalizada mas a candidatura não foi bloqueada: {sem_bloqueio[0]!r}.")
+    falsos = [t for t in CONTROLES_CA12
+              if any(s.gravidade == "forte" for s in sinais_risco(VagaEncontrada(titulo="Dev", empresa="Fintech", descricao=t)))]
+    base = carregar_base()
+    recomendadas = [v.id for v in base.itens if v.id in base.ultimo_resumo_ids
+                    and any(s.tipo.startswith("golpe:") and s.gravidade == "forte" for s in v.sinais)]
+    if recomendadas:
+        return Criterio("CA-12", titulo, "falhou", f"Vagas com indício de golpe no resumo: {recomendadas}.")
+    reais = sum(1 for v in base.itens if any(s.tipo in ("golpe:taxa", "golpe:pix") for s in v.sinais))
+    detalhe = (f"{len(GOLPES_DE_TESTE)} de {len(GOLPES_DE_TESTE)} vagas de teste sinalizadas e com a candidatura bloqueada "
+               f"(RN-12); {reais} vaga(s) real(is) com taxa ou Pix fora das recomendações")
+    if falsos:
+        detalhe += f"; atenção: {len(falsos)} controle(s) sem golpe também foram sinalizados"
+    return Criterio("CA-12", titulo, "ok", detalhe + ".")
+
+
+def verificar_fase2(executar_navegador: bool = True) -> list[Criterio]:
+    criterios = []
+    for codigo, verificar in (("CA-11", lambda: _ca11(executar_navegador)), ("CA-12", _ca12)):
+        try:
+            criterios.append(verificar())
+        except Exception as erro:  # noqa: BLE001
+            criterios.append(Criterio(codigo, "erro ao verificar", "falhou", f"{type(erro).__name__}: {erro}"))
+    return criterios

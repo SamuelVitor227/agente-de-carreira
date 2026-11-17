@@ -112,6 +112,9 @@ Agente de IA para gestão de carreira: otimização de currículo, perfil no Lin
 | RF-AC-04 | Preparação para entrevista: empresa, requisitos × evidências, perguntas prováveis e para fazer | ✅ Implementado |
 | RF-AC-05 | Contatos de recrutadores com dados mínimos e exclusão em um passo (RNF-05) | ✅ Implementado |
 | RF-AC-06 | Motivo de saída obrigatório em reprovação e desistência | ✅ Implementado |
+| RF-RL-01 | Painel com vagas, candidaturas, taxa de retorno, entrevistas e propostas por fonte, foco e variante de CV | ✅ Implementado |
+| RF-RL-02 | Relatório semanal: o que funcionou, competências mais pedidas que faltam e próximas ações (agendável) | ✅ Implementado |
+| RF-RL-03 | Exportação em CSV (abre no Excel) dos dados e do log de ações | ✅ Implementado |
 | RF-OP-01 | Preferências num só lugar: buscas, limites diários, limiares, horários, notificações, modo por plataforma e motor por tarefa | ✅ Implementado |
 | RF-OP-02 | Modo global "somente sugestão": nenhuma plataforma é tocada | ✅ Implementado |
 | RF-OP-03 | Pausar, retomar e cancelar tarefas; retomar a partir do último passo confirmado | ✅ Implementado |
@@ -120,9 +123,9 @@ Agente de IA para gestão de carreira: otimização de currículo, perfil no Lin
 | RF-OP-06 | Log de auditoria das ações externas: plataforma, ação, data e hora, antes e depois, aprovação e captura | ✅ Implementado |
 | RF-OP-07 | Saúde dos adaptadores: parar e avisar ao detectar erro ou mudança de layout | ✅ Implementado |
 
-## Portão do MVP
+## Portões de aceitação
 
-O MVP (M1, M2, M4 e M8) está completo. `agente aceite` confere os critérios de aceitação CA-01 a CA-10 sobre os seus dados reais e mostra o que já está comprovado, o que depende de uso (vagas coletadas, cinco dias úteis de resumo antes das 8h) e o que pede conferência manual (enviar o PDF à Gupy, CA-03).
+Todos os requisitos da especificação estão implementados (M1 a M8). `agente aceite` confere os critérios da seção 14 sobre os seus dados reais: o MVP (CA-01 a CA-10) e a fase 2 (CA-11 e CA-12; `--fase 1|2` mostra só um). Ele separa o que já está comprovado, o que depende de uso (vagas coletadas, cinco dias úteis de resumo antes das 8h) e o que pede conferência manual: enviar o PDF à Gupy (CA-03) e ver o agente parar na tela de revisão num formulário real (CA-11, cuja parte automática roda num formulário de teste no Chromium). O CA-12 confere dez vagas de teste com taxa ou Pix e exige 100% de sinalização e bloqueio.
 
 ## Como usar
 
@@ -175,7 +178,7 @@ uv run agente ia fila / autorizar ID / descartar ID   # pedidos de IA negados, p
 uv run agente ia log                     # registro de cada uso de IA
 uv run agente ia recusado ID            # o motor recusou por limite: refazer no outro ou seguir local
 uv run agente ia lote / lote criar --tarefa X / lote revogar ID   # autorização em lote (RF-IA-08)
-uv run agente aceite                     # portão do MVP: critérios CA-01 a CA-10 sobre os seus dados
+uv run agente aceite [--fase 1|2]        # portões: CA-01 a CA-10 (MVP) e CA-11, CA-12 (fase 2)
 uv run agente plataformas / ver ID / pacote ID       # catálogo, campos e pacote de cadastro
 uv run agente plataformas cadastrar ID   # cadastro guiado (copiloto ou assistido), pausa e retoma
 uv run agente plataformas conferir ID [--antes-de-salvar]   # confere o gravado e mede a completude
@@ -190,6 +193,10 @@ uv run agente funil lembretes / feito ID / followup ID / agenda   # follow-ups, 
 uv run agente funil emails / confirmar   # retornos por e-mail (.eml em data/caixa-retornos ou IMAP)
 uv run agente funil preparar ID          # material de preparação para a entrevista
 uv run agente contatos / contatos adicionar --nome X / interacao ID "resumo" / excluir ID
+uv run agente painel [--dias 30] [--html]   # painel por fonte, foco e variante; data/painel.html a cada rodada
+uv run agente relatorio semanal [--notificar]   # o que funcionou, lacunas e próximas ações
+uv run agente relatorio agendar          # relatório todo domingo às 20h no Agendador do Windows
+uv run agente exportar                   # CSVs em data/exportacoes/AAAA-MM-DD (vagas, funil, log, IA, contatos)
 uv run agente busca criar --nome backend --foco backend-dotnet   # busca salva com cargos e sinônimos
 uv run agente busca empresa "Empresa X" --pagina https://empresax.gupy.io/   # empresa-alvo
 uv run agente vagas rodada               # coleta, triagem, aderência e resumo do dia
@@ -237,4 +244,6 @@ Os dados ficam em `data/perfil-mestre.json` (fora do git), configurável pela va
 
 ## Decisões em aberto
 
-Nível-alvo depois de 2026/2; faixa salarial; presencial fora de BH ou mudança de cidade; visibilidade do Open to Work; modo assistido no LinkedIn; construção (A: dentro do Claude, ou B: código próprio em Python ou .NET); motor padrão por tarefa; canal de notificação; plataformas P2 da fase 2.
+Já decidido: construção B, em código próprio em Python. Motor por tarefa, canal de notificação e modo por plataforma ficam na configuração (`agente config`) e mudam sem mexer no código.
+
+Ainda são suas: nível-alvo depois de 2026/2; faixa salarial (`agente respostas definir pretensao_estagio ...`); presencial fora de BH ou mudança de cidade; visibilidade do Open to Work; modo assistido no LinkedIn (o padrão segue copiloto); plataformas P2 da fase 2.
