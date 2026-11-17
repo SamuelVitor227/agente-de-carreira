@@ -13,6 +13,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
+from ..ia import autoria
 from ..models import PerfilMestre
 from ..storage import diretorio_dados
 from .modelos import BaseVagas, ConfigVagas, VagaEncontrada
@@ -33,6 +34,8 @@ class ItemResumo(BaseModel):
     fontes: list[str] = Field(default_factory=list)
     avisos: list[str] = Field(default_factory=list)
     alerta: bool = False
+    justificativa_ia: str | None = None
+    autoria_justificativa: str | None = None  # RF-IA-06
 
 
 class Resumo(BaseModel):
@@ -65,6 +68,8 @@ def item_resumo(vaga: VagaEncontrada, config: ConfigVagas) -> ItemResumo:
         link=vaga.link, fontes=sorted({f.origem for f in vaga.fontes}),
         avisos=[s.mensagem for s in vaga.sinais],
         alerta=not vaga.risco and vaga.nota >= config.limiar_alerta,
+        justificativa_ia=vaga.justificativa_ia,
+        autoria_justificativa=autoria(vaga.motor_justificativa) if vaga.justificativa_ia else None,
     )
 
 
@@ -120,7 +125,8 @@ def resumo_markdown(resumo: Resumo, config: ConfigVagas) -> str:
             f"### {n}. {item.titulo} — {item.empresa or 'empresa não informada'} ({item.nota}){destaque}",
             f"- **Ação sugerida:** {item.acao}",
             f"- **Local:** {_linha_local(item)}",
-            f"- **Motivo:** {item.motivo}",
+            f"- **Motivo ({autoria(None)}):** {item.motivo}",
+            *([f"- **Justificativa ({item.autoria_justificativa}):** {item.justificativa_ia}"] if item.justificativa_ia else []),
             f"- **Link:** {item.link or 'sem link'}",
             f"- **Fontes:** {', '.join(item.fontes)}",
             f"- **ID:** {item.id}",

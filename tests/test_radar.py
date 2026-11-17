@@ -515,7 +515,8 @@ def test_resumo_ordenado_com_link_motivo_e_acao():
     assert [i.empresa for i in resumo.itens] == ["Omega", "Beta"]          # por aderência
     assert resumo.itens[0].acao == "candidatar" and resumo.itens[1].acao == "descartar"
     md = resumo_markdown(resumo, config)
-    assert "https://omega.gupy.io/jobs/1" in md and "**Motivo:**" in md and "**Ação sugerida:** candidatar" in md
+    assert "https://omega.gupy.io/jobs/1" in md and "**Ação sugerida:** candidatar" in md
+    assert "**Motivo (agente (motor local)):**" in md                      # autoria (RF-IA-06)
     assert [v.empresa for v in proc.alertas] == ["Omega"] and proc.arquivo_alerta.is_file()   # alerta ≥ 80
     assert selecionar_alertas(base, config) == []                           # não alerta duas vezes
 

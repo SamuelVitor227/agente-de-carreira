@@ -71,6 +71,8 @@ Agente de IA para gestão de carreira: otimização de currículo, perfil no Lin
 | RF-IA-03 | Sem autorização nada é gerado; o pedido fica pendente na fila para autorizar ou descartar depois | ✅ Implementado |
 | RF-IA-04 | Filtro automático que remove e-mail, telefone, CPF, RG, CEP e endereço de todo prompt | ✅ Implementado |
 | RF-IA-05 | Registro de cada uso: data, motor, tarefa, dados enviados, removidos, autorização e resultado | ✅ Implementado |
+| RF-IA-06 | Cada texto gerado identifica quem o escreveu: Claude Pro, Gemini Pro, motor local ou você | ✅ Implementado |
+| RF-IA-07 | Recusa por limite de uso: avisa e oferece o outro motor ou o local, com nova autorização | ✅ Implementado |
 | RF-VG-01 | Buscas salvas: cargos e sinônimos, nível, modelo, localidades, contrato, salário mínimo, idioma, empresas-alvo e bloqueadas | ✅ Implementado |
 | RF-VG-02 | Coleta só de fontes permitidas: alertas por e-mail (.eml ou IMAP somente leitura), páginas de carreira e links seus | ✅ Implementado |
 | RF-VG-03 | Rodada sob demanda e agendada (padrão 7h, Agendador do Windows ou cron) | ✅ Implementado |
@@ -141,6 +143,7 @@ uv run agente li post rascunho N --ia / editar / aprovar / publicado   # posts s
 uv run agente ia motores / motor TAREFA MOTOR   # motor de cada tarefa (claude, gemini, local, perguntar)
 uv run agente ia fila / autorizar ID / descartar ID   # pedidos de IA negados, pendentes de decisão
 uv run agente ia log                     # registro de cada uso de IA
+uv run agente ia recusado ID            # o motor recusou por limite: refazer no outro ou seguir local
 uv run agente busca criar --nome backend --foco backend-dotnet   # busca salva com cargos e sinônimos
 uv run agente busca empresa "Empresa X" --pagina https://empresax.gupy.io/   # empresa-alvo
 uv run agente vagas rodada               # coleta, triagem, aderência e resumo do dia

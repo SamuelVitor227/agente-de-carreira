@@ -35,16 +35,17 @@ class AcaoExterna(BaseModel):
     origem_aprovacao: str            # ex.: "log LinkedIn 1a2b3c4d", "fila de aprovações"
     captura: str | None = None
     resultado: str = "aplicado"
+    autoria: str | None = None       # RF-IA-06: quem escreveu o texto publicado
 
 
 def registrar_acao(
     *, plataforma: str, acao: str, alvo: str, origem_aprovacao: str, antes: str | None = None,
     depois: str | None = None, modo: str = "copiloto", aprovado_em: datetime | None = None,
-    captura: Path | None = None, resultado: str = "aplicado",
+    captura: Path | None = None, resultado: str = "aplicado", autoria: str | None = None,
 ) -> AcaoExterna:
     registro = AcaoExterna(
         plataforma=plataforma, acao=acao, alvo=alvo, antes=antes, depois=depois, modo=modo,
-        aprovado_em=aprovado_em, origem_aprovacao=origem_aprovacao, resultado=resultado,
+        aprovado_em=aprovado_em, origem_aprovacao=origem_aprovacao, resultado=resultado, autoria=autoria,
     )
     if captura is not None:
         destino = diretorio_dados() / PASTA_CAPTURAS / f"{registro.id}{captura.suffix.lower()}"

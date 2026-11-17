@@ -13,6 +13,7 @@ from datetime import datetime
 
 from ..ia import (
     MOTORES_EXTERNOS,
+    autoria,
     autorizar_pendente,
     carregar_usos,
     descartar_pendente,
@@ -71,7 +72,7 @@ def listar_fila() -> list[ItemFila]:
             itens.append(ItemFila(
                 id=f"post:{pub.id}", tipo=PREFIXOS["post"], titulo=f"Publicação no LinkedIn · {pub.titulo}",
                 antes=None, depois=pub.texto, criado_em=pub.criada_em,
-                detalhes=[f"{len(pub.texto)}/{LIMITES['publicacao']} caracteres", f"escrito por: {pub.motor or 'agente (local)'}"],
+                detalhes=[f"{len(pub.texto)}/{LIMITES['publicacao']} caracteres", f"escrito por: {autoria(pub.motor)}"],
                 problemas=validar_publicacao(pub.texto),
             ))
     for alteracao in carregar_pendentes().itens:
@@ -79,8 +80,8 @@ def listar_fila() -> list[ItemFila]:
         itens.append(ItemFila(
             id=f"li:{alteracao.id}", tipo=PREFIXOS["li"], titulo=f"LinkedIn · {alteracao.rotulo}",
             antes=alteracao.anterior, depois=alteracao.novo, criado_em=alteracao.criada_em,
-            detalhes=[f"{len(alteracao.novo)}{f'/{limite}' if limite else ''} caracteres"]
-            + ([f"escrito por: {alteracao.motor}"] if alteracao.motor else []),
+            detalhes=[f"{len(alteracao.novo)}{f'/{limite}' if limite else ''} caracteres",
+                      f"escrito por: {autoria(alteracao.motor)}"],
             problemas=validar_texto(alteracao.campo, alteracao.novo),
         ))
     itens.sort(key=lambda i: i.criado_em)
@@ -163,14 +164,15 @@ def editar(id_: str, *, texto: str | None = None, motor: str | None = None) -> D
         return Decisao(mensagem=f"Motor trocado para {motor}; o pedido continua na fila.")
     if not texto or not texto.strip():
         raise ValueError("Informe o novo texto.")
+    # RF-IA-06: sem motor informado, o texto editado é do usuário.
     if prefixo == "post":
         colecao = carregar_publicacoes()
-        editar_publicacao(colecao.buscar(ref), texto, motor=motor)
+        editar_publicacao(colecao.buscar(ref), texto, motor=motor or "usuario")
         salvar_publicacoes(colecao)
         return Decisao(mensagem="Texto da publicação atualizado; continua na fila.")
     pendentes = carregar_pendentes()
     item = pendentes.buscar(ref)
-    item.novo, item.motor = texto.strip(), motor
+    item.novo, item.motor = texto.strip(), motor or "usuario"
     salvar_pendentes(pendentes)
     avisos = validar_texto(item.campo, item.novo)
     return Decisao(mensagem="Texto atualizado; continua na fila." + (f" Atenção: {'; '.join(avisos)}." if avisos else ""))

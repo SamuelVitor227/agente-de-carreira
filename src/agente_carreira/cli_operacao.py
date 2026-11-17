@@ -391,6 +391,8 @@ def auditoria_ver(id_: str = typer.Argument(..., metavar="ID")) -> None:
                   f"[dim]{acao.quando:%d/%m/%Y %H:%M} · modo {acao.modo} · {acao.resultado}[/dim]")
     console.print(f"Aprovação: {escape(acao.origem_aprovacao)}"
                   + (f" em {acao.aprovado_em:%d/%m/%Y %H:%M}" if acao.aprovado_em else ""))
+    if acao.autoria:
+        console.print(f"Texto escrito por: {escape(acao.autoria)}")
     paineis = []
     if acao.antes is not None:
         paineis.append(Panel(Text(acao.antes or "(vazio)"), title="ANTES", border_style="red"))

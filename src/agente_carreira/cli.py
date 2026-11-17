@@ -82,7 +82,8 @@ def _prompt_multilinha(rotulo: str) -> list[str]:
         itens.append(linha)
 
 
-def _perguntar_autorizacao(motor: str, descricao: str, dados: list[str], removidos: dict[str, int], caracteres: int) -> str:
+def _perguntar_autorizacao(motor: str, descricao: str, dados: list[str], removidos: dict[str, int], caracteres: int,
+                           permitir_troca: bool = True) -> str:
     """Aviso do motor, da tarefa e dos dados; devolve 's' (aprovar), 't' (trocar motor) ou 'n' (negar) — RF-IA-02."""
     from .ia import outro_motor
 
@@ -97,9 +98,11 @@ def _perguntar_autorizacao(motor: str, descricao: str, dados: list[str], removid
         )
     corpo += f"\n[dim]Tamanho do prompt: {caracteres} caracteres[/dim]"
     console.print(Panel(corpo, title="Autorização de uso de IA (RF-IA-02)", border_style="magenta"))
+    pergunta = f"Autoriza? [s]im, [t]rocar para {outro_motor(motor)} ou [n]ão" if permitir_troca else "Autoriza? [s]im ou [n]ão"
+    validas = {"s", "t", "n"} if permitir_troca else {"s", "n"}
     while True:
-        escolha = typer.prompt(f"Autoriza? [s]im, [t]rocar para {outro_motor(motor)} ou [n]ão").lstrip("﻿").strip().lower()[:1]
-        if escolha in {"s", "t", "n"}:
+        escolha = typer.prompt(pergunta).lstrip("﻿").strip().lower()[:1]
+        if escolha in validas:
             return escolha
         console.print("Opção inválida.")
 
@@ -124,6 +127,7 @@ def _usar_ia(perfil, tarefa: str, motor_cli: str | None, dados: list[str], gerar
         resolver_motor,
         salvar_usos,
         sanitizar,
+        sugerir_motor,
         valores_sensiveis,
     )
 
@@ -138,6 +142,12 @@ def _usar_ia(perfil, tarefa: str, motor_cli: str | None, dados: list[str], gerar
             f"Para usar IA nela: 'agente ia motor {tarefa} perguntar'."
         )
         return None
+    # RF-IA-07: se o motor recusou por limite há pouco, avisa e propõe o outro.
+    sugerido, aviso = sugerir_motor(carregar_usos(), motor)
+    if aviso:
+        console.print(f"[yellow]{escape(aviso)}[/yellow]")
+        if not motor_cli:
+            motor = sugerido
 
     sensiveis = valores_sensiveis(perfil)
     while True:
@@ -160,7 +170,75 @@ def _usar_ia(perfil, tarefa: str, motor_cli: str | None, dados: list[str], gerar
         )
         return None
     console.print(f"[green]Prompt gerado em[/green] {uso.arquivo_prompt}  [dim](uso de IA {uso.id} registrado)[/dim]")
+    console.print(f"[dim]Se o {uso.motor.capitalize()} recusar por limite de uso, rode 'agente ia recusado {uso.id}'.[/dim]")
     return uso
+
+
+def _tratar_recusa(uso_id: str) -> None:
+    """RF-IA-07: registra a recusa por limite e oferece o outro motor ou o motor local, com nova autorização."""
+    from .ia import (
+        carregar_usos,
+        outro_motor,
+        prompt_para_outro_motor,
+        registrar_pedido,
+        registrar_recusa,
+        salvar_usos,
+    )
+
+    usos = carregar_usos()
+    try:
+        uso = registrar_recusa(usos, uso_id)
+    except ValueError as erro:
+        console.print(f"[red]{escape(str(erro))}[/red]")
+        raise typer.Exit(1)
+    salvar_usos(usos)
+    outro = outro_motor(uso.motor)
+    console.print(Panel(
+        f"O {uso.motor.capitalize()} recusou o pedido {uso.id} ({escape(uso.tarefa)}) por limite de uso da assinatura.\n"
+        f"Dá para refazer no {outro.capitalize()}, com nova autorização, ou seguir no motor local, sem IA.",
+        title="Motor recusou por limite (RF-IA-07)", border_style="yellow",
+    ))
+    while True:
+        escolha = typer.prompt(f"[o]utro motor ({outro}), [l]ocal (sem IA) ou [n]ada agora").lstrip("﻿").strip().lower()[:1]
+        if escolha in {"o", "l", "n"}:
+            break
+        console.print("Opção inválida.")
+    if escolha == "l":
+        console.print("Seguindo no motor local: nenhuma IA externa é usada; o texto do agente continua valendo.")
+        return
+    if escolha == "n":
+        console.print(f"Nada feito. Para decidir depois: 'agente ia recusado {uso.id}'.")
+        return
+    try:
+        prompt, nome_arquivo = prompt_para_outro_motor(usos, uso.id, outro)
+    except ValueError as erro:
+        console.print(f"[red]{escape(str(erro))}[/red]")
+        raise typer.Exit(1)
+    decisao = _perguntar_autorizacao(outro, uso.descricao, uso.dados, uso.removidos, len(prompt), permitir_troca=False)
+    novo = registrar_pedido(
+        usos, tarefa=uso.tarefa, descricao=uso.descricao, motor=outro, dados=uso.dados, prompt=prompt,
+        removidos=uso.removidos, nome_arquivo=nome_arquivo, autorizado=decisao == "s", substitui=uso.id,
+    )
+    salvar_usos(usos)
+    if decisao == "s":
+        console.print(f"[green]Prompt gerado para o {outro.capitalize()} em[/green] {novo.arquivo_prompt}  [dim](uso {novo.id})[/dim]")
+    else:
+        console.print(f"Nada foi gerado. O pedido {novo.id} ficou na fila de aprovações.")
+
+
+def _checar_recusa(texto: str, tarefa: str, motor: str | None) -> bool:
+    """Se a 'resposta' trazida for uma recusa por limite, trata a recusa e devolve True."""
+    from .ia import carregar_usos, resposta_e_recusa_por_limite, ultimo_aprovado
+
+    if not motor or not resposta_e_recusa_por_limite(texto):
+        return False
+    console.print("[yellow]O arquivo traz uma recusa por limite de uso do motor, não uma resposta.[/yellow]")
+    uso = ultimo_aprovado(carregar_usos(), tarefa, motor)
+    if uso is None:
+        console.print(f"Nenhum pedido de '{tarefa}' enviado ao {motor} foi encontrado no registro.")
+        return True
+    _tratar_recusa(uso.id)
+    return True
 
 
 # ---------------------------------------------------------------- perfil
@@ -1305,7 +1383,8 @@ def _curto(texto: str | None, tamanho: int = 40) -> str:
 
 
 def _auditar_linkedin(entrada, captura: Path | None = None) -> None:
-    """RF-OP-06: toda alteração aplicada no LinkedIn vai para o log de auditoria."""
+    """RF-OP-06: toda alteração aplicada no LinkedIn vai para o log de auditoria, com a autoria do texto (RF-IA-06)."""
+    from .ia import autoria
     from .linkedin.propostas import rotulo_do_campo
     from .operacao.auditoria import registrar_acao
 
@@ -1314,6 +1393,7 @@ def _auditar_linkedin(entrada, captura: Path | None = None) -> None:
         acao="reverter campo" if entrada.tipo == "reversao" else "alterar campo",
         alvo=rotulo_do_campo(entrada.campo), antes=entrada.anterior, depois=entrada.novo, modo="copiloto",
         aprovado_em=entrada.aprovado_em, origem_aprovacao=f"log LinkedIn {entrada.id}", captura=captura,
+        autoria=autoria(entrada.motor),
     )
 
 
@@ -1331,6 +1411,7 @@ def _fluxo_aprovacao(propostas, motor: str | None = None, tarefa_id: str | None 
         salvar_estado,
         salvar_log,
     )
+    from .ia import autoria
     from .linkedin.propostas import limite_do_campo, validar_texto
     from .operacao.tarefas import carregar_tarefas, confirmar_passo, pausar, salvar_tarefas
 
@@ -1355,11 +1436,11 @@ def _fluxo_aprovacao(propostas, motor: str | None = None, tarefa_id: str | None 
                 title=f"{i}/{len(propostas)} · {escape(p.rotulo)} — ANTES · {len(antes)}{sufixo} caracteres",
                 border_style="red",
             ))
-            novo = p.novo
+            novo, autor = p.novo, motor
             while True:
                 problemas = validar_texto(p.campo, novo)
                 console.print(Panel(
-                    Text(novo), title=f"DEPOIS · {len(novo)}{sufixo} caracteres",
+                    Text(novo), title=f"DEPOIS · {len(novo)}{sufixo} caracteres · escrito por: {autoria(autor)}",
                     border_style="yellow" if problemas else "green",
                 ))
                 for problema in problemas:
@@ -1370,6 +1451,7 @@ def _fluxo_aprovacao(propostas, motor: str | None = None, tarefa_id: str | None 
                     continue
                 if escolha == "e":
                     novo = _ler_texto_editado(typer.prompt("Novo texto (ou caminho de um arquivo .txt/.md)"))
+                    autor = "usuario"  # RF-IA-06: o texto editado passa a ser seu
                     continue
                 if escolha == "a" and problemas:
                     console.print("[red]Não dá para aprovar com problemas pendentes — edite o texto.[/red]")
@@ -1384,7 +1466,7 @@ def _fluxo_aprovacao(propostas, motor: str | None = None, tarefa_id: str | None 
                 concluir_passo(p.campo, pulado=True)
                 continue
 
-            entrada = registrar_aprovacao(log, p.campo, p.anterior, novo, motor=motor)
+            entrada = registrar_aprovacao(log, p.campo, p.anterior, novo, motor=autor)
             salvar_log(log)
             aprovadas += 1
             concluir_passo(p.campo)
@@ -1526,8 +1608,10 @@ def li_log(
     tabela = Table(title=f"Log do LinkedIn ({len(entradas)})")
     for col in ("ID", "Aprovado em", "Campo", "Tipo", "Status", "Antes → depois"):
         tabela.add_column(col, overflow="fold")
+    from .ia import autoria
+
     for e in reversed(entradas):
-        status = e.status + (f" · {e.motor}" if e.motor else "")
+        status = f"{e.status} · {autoria(e.motor)}"
         tabela.add_row(
             e.id, f"{e.aprovado_em:%d/%m/%Y %H:%M}", Text(rotulo_do_campo(e.campo)), e.tipo, status,
             Text(f"{_curto(e.anterior) or '(vazio)'} → {_curto(e.novo) or '(vazio)'}"),
@@ -1683,7 +1767,10 @@ def ingles_registrar(
 
     from .ia import carregar_usos, registrar_resultado, salvar_usos
 
-    textos = ler_resposta(arquivo.read_text(encoding="utf-8"))
+    conteudo = arquivo.read_text(encoding="utf-8")
+    if _checar_recusa(conteudo, "traducao-linkedin", motor):
+        raise typer.Exit(0)
+    textos = ler_resposta(conteudo)
     if not textos:
         console.print("[red]Nenhum campo reconhecido — a resposta precisa manter as linhas '### CAMPO: en:...'.[/red]")
         raise typer.Exit(1)
@@ -1852,12 +1939,16 @@ def post_editar(
     motor: str | None = typer.Option(None, "--motor", help="Motor que escreveu o texto (claude/gemini), se houver."),
 ) -> None:
     """Substitui o texto do rascunho (ex.: versão polida pela IA); volta a exigir aprovação."""
+    from .ia import autoria
     from .linkedin.publicacoes import carregar_publicacoes, editar_publicacao, salvar_publicacoes, validar_publicacao
 
+    texto = arquivo.read_text(encoding="utf-8")
+    if _checar_recusa(texto, "polimento-post", motor):
+        raise typer.Exit(0)
     colecao = carregar_publicacoes()
     try:
         pub = colecao.buscar(id_)
-        editar_publicacao(pub, arquivo.read_text(encoding="utf-8"), motor=motor)
+        editar_publicacao(pub, texto, motor=motor or "usuario")  # sem --motor, o texto é seu (RF-IA-06)
     except ValueError as erro:
         console.print(f"[red]{escape(str(erro))}[/red]")
         raise typer.Exit(1)
@@ -1869,7 +1960,7 @@ def post_editar(
         if registrar_resultado(usos, "polimento-post", motor, f"resposta registrada no post {pub.id}"):
             salvar_usos(usos)
     problemas = validar_publicacao(pub.texto)
-    console.print(Panel(Text(pub.texto), title=f"{pub.id} · {len(pub.texto)}/3000 caracteres · escrito por: {pub.motor or 'você/agente'}",
+    console.print(Panel(Text(pub.texto), title=f"{pub.id} · {len(pub.texto)}/3000 caracteres · escrito por: {autoria(pub.motor)}",
                         border_style="yellow" if problemas else "cyan"))
     for problema in problemas:
         console.print(f"[red]• {escape(problema)}[/red]")
@@ -1878,7 +1969,8 @@ def post_editar(
 
 @post_app.command("listar")
 def post_listar() -> None:
-    """Lista os rascunhos e publicações."""
+    """Lista os rascunhos e publicações, com quem escreveu cada uma (RF-IA-06)."""
+    from .ia import autoria
     from .linkedin.publicacoes import carregar_publicacoes
 
     colecao = carregar_publicacoes()
@@ -1889,13 +1981,14 @@ def post_listar() -> None:
     for col in ("ID", "Projeto", "Status", "Escrito por", "Caracteres", "Criada em"):
         tabela.add_column(col)
     for p in colecao.itens:
-        tabela.add_row(p.id, Text(p.titulo), p.status, p.motor or "agente (local)", str(len(p.texto)), f"{p.criada_em:%d/%m/%Y}")
+        tabela.add_row(p.id, Text(p.titulo), p.status, autoria(p.motor), str(len(p.texto)), f"{p.criada_em:%d/%m/%Y}")
     console.print(tabela)
 
 
 @post_app.command("aprovar")
 def post_aprovar(id_: str = typer.Argument(..., metavar="ID")) -> None:
     """Aprova uma publicação para você publicar manualmente (RN-01)."""
+    from .ia import autoria
     from .linkedin.publicacoes import aprovar_publicacao, carregar_publicacoes, salvar_publicacoes, validar_publicacao
 
     colecao = carregar_publicacoes()
@@ -1904,7 +1997,7 @@ def post_aprovar(id_: str = typer.Argument(..., metavar="ID")) -> None:
     except ValueError as erro:
         console.print(f"[red]{escape(str(erro))}[/red]")
         raise typer.Exit(1)
-    console.print(Panel(Text(pub.texto), title=f"{escape(pub.titulo)} · {len(pub.texto)}/3000 · escrito por: {pub.motor or 'agente (local)'}",
+    console.print(Panel(Text(pub.texto), title=f"{escape(pub.titulo)} · {len(pub.texto)}/3000 · escrito por: {autoria(pub.motor)}",
                         border_style="cyan"))
     if problemas := validar_publicacao(pub.texto):
         for problema in problemas:
@@ -1949,9 +2042,12 @@ def post_publicado(
         console.print(f"[red]{escape(str(erro))}[/red]")
         raise typer.Exit(1)
     salvar_publicacoes(colecao)
+    from .ia import autoria
+
     registrar_acao(
         plataforma="linkedin", acao="publicar post", alvo=pub.titulo, depois=pub.texto, modo="copiloto",
         aprovado_em=pub.aprovado_em, origem_aprovacao=f"publicação {pub.id}", captura=captura,
+        autoria=autoria(pub.motor),
     )
     console.print("[green]Registrada como publicada e na auditoria.[/green]")
 
@@ -2075,6 +2171,12 @@ def ia_descartar(id_: str = typer.Argument(..., metavar="ID")) -> None:
         raise typer.Exit(1)
     salvar_usos(usos)
     console.print(f"[green]Pedido {id_} descartado.[/green]")
+
+
+@ia_app.command("recusado")
+def ia_recusado(id_: str = typer.Argument(..., metavar="ID", help="ID do uso de IA (veja 'agente ia log').")) -> None:
+    """Registra que o motor recusou por limite de uso e oferece o outro motor ou o local (RF-IA-07)."""
+    _tratar_recusa(id_)
 
 
 @ia_app.command("log")

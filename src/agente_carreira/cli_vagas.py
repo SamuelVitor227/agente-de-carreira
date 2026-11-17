@@ -407,10 +407,12 @@ def _mostrar_vaga(v: VagaEncontrada) -> None:
         linhas.append(f"Publicada: {v.publicada_em or '—'} · Válida até: {v.valida_ate or '—'}")
     linhas.append(f"Link: {escape(v.link or '—')}")
     linhas.append("Fontes: " + escape(", ".join(f"{f.origem} ({f.tipo})" for f in v.fontes)))
+    from .ia import autoria
+
     if v.aderencia:
-        linhas.append(f"\n[bold]Aderência {v.nota}:[/bold] {escape(v.aderencia.justificativa)}")
+        linhas.append(f"\n[bold]Aderência {v.nota} ({autoria(None)}):[/bold] {escape(v.aderencia.justificativa)}")
     if v.justificativa_ia:
-        linhas.append(f"[bold]Justificativa ({escape(v.motor_justificativa or 'IA')}):[/bold] {escape(v.justificativa_ia)}")
+        linhas.append(f"[bold]Justificativa ({escape(autoria(v.motor_justificativa))}):[/bold] {escape(v.justificativa_ia)}")
     if v.requisitos_obrigatorios:
         linhas.append("[bold]Obrigatórios:[/bold] " + escape("; ".join(v.requisitos_obrigatorios)))
     if v.requisitos_desejaveis:
@@ -498,10 +500,14 @@ def vagas_justificativas(
     motor: str = typer.Option(..., "--motor", help="Motor que escreveu (claude ou gemini)."),
 ) -> None:
     """Anexa às vagas as justificativas escritas pela IA, identificando o motor (RF-IA-06)."""
+    from .cli import _checar_recusa
     from .ia import carregar_usos, registrar_resultado, salvar_usos
     from .radar.resumo import ler_justificativas
 
-    textos = ler_justificativas(arquivo.read_text(encoding="utf-8"))
+    conteudo = arquivo.read_text(encoding="utf-8")
+    if _checar_recusa(conteudo, "justificativa-vagas", motor):
+        raise typer.Exit(0)
+    textos = ler_justificativas(conteudo)
     if not textos:
         console.print("[red]Nenhuma justificativa reconhecida — a resposta precisa manter as linhas '### VAGA: <id>'.[/red]")
         raise typer.Exit(1)

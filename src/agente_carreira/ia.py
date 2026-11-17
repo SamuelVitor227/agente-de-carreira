@@ -127,10 +127,13 @@ class UsoIA(BaseModel):
     arquivo_prompt: str | None = None
     resultado: str | None = None
     prompt_pendente: str | None = None                       # guardado só enquanto pendente
+    recusado_por_limite: bool = False                        # RF-IA-07
+    substitui: str | None = None                             # uso recusado que este refaz em outro motor
 
 
 class UsosIA(BaseModel):
     itens: list[UsoIA] = Field(default_factory=list)
+    limites: dict[str, datetime] = Field(default_factory=dict)  # motor → quando recusou por limite (RF-IA-07)
 
     def buscar(self, id_: str) -> UsoIA:
         for uso in self.itens:
@@ -181,11 +184,12 @@ def registrar_pedido(
     removidos: dict[str, int],
     nome_arquivo: str,
     autorizado: bool,
+    substitui: str | None = None,
 ) -> UsoIA:
     """Registra o pedido; se autorizado, gera o prompt, senão deixa pendente sem gerar nada."""
     uso = UsoIA(
         tarefa=tarefa, descricao=descricao, motor=motor, dados=dados, removidos=removidos,
-        caracteres=len(prompt), nome_arquivo=nome_arquivo,
+        caracteres=len(prompt), nome_arquivo=nome_arquivo, substitui=substitui,
     )
     if autorizado:
         uso.autorizacao = "aprovado"
@@ -225,6 +229,80 @@ def descartar_pendente(usos: UsosIA, id_: str) -> UsoIA:
     uso.prompt_pendente = None
     uso.resultado = "descartado na fila; nada foi gerado"
     return uso
+
+
+# ---------------------------------------------------------------- RF-IA-06
+
+NOMES_AUTORIA = {"claude": "Claude Pro", "gemini": "Gemini Pro", "usuario": "você", "local": "agente (motor local)"}
+
+
+def autoria(motor: str | None) -> str:
+    """Quem escreveu um texto: Claude Pro, Gemini Pro, você ou o motor local do agente (RF-IA-06)."""
+    return NOMES_AUTORIA.get(motor or "local", motor or "agente (motor local)")
+
+
+# ---------------------------------------------------------------- RF-IA-07
+
+HORAS_LIMITE = 5  # por quanto tempo um motor que recusou por limite deixa de ser o proposto
+_PADRAO_LIMITE = re.compile(
+    r"usage limit|message limit|rate limit|reached (your|the) (daily |usage |message )?limit|out of (free )?messages"
+    r"|limite de (uso|mensagens)|atingiu o limite|alcan[cç]ou o limite|quota (exceeded|excedida)|cota (excedida|esgotada)"
+    r"|try again (after|later|in)|tente novamente (mais tarde|ap[oó]s|em)",
+    re.IGNORECASE,
+)
+TAMANHO_MAXIMO_RECUSA = 600  # recusas são mensagens curtas; texto longo é resposta de verdade
+
+
+def resposta_e_recusa_por_limite(texto: str) -> bool:
+    texto = (texto or "").strip()
+    return 0 < len(texto) <= TAMANHO_MAXIMO_RECUSA and bool(_PADRAO_LIMITE.search(texto))
+
+
+def registrar_recusa(usos: UsosIA, id_: str) -> UsoIA:
+    uso = usos.buscar(id_)
+    if uso.autorizacao != "aprovado":
+        raise ValueError(f"O uso {id_} não foi enviado (status: {uso.autorizacao}); não há recusa a registrar.")
+    uso.recusado_por_limite = True
+    uso.resultado = "recusado pelo motor: limite de uso da assinatura"
+    usos.limites[uso.motor] = _agora()
+    return uso
+
+
+def motor_em_limite(usos: UsosIA, motor: str, agora: datetime | None = None, horas: int = HORAS_LIMITE) -> datetime | None:
+    quando = usos.limites.get(motor)
+    agora = agora or _agora()
+    if quando and (agora - quando).total_seconds() < horas * 3600:
+        return quando
+    return None
+
+
+def sugerir_motor(usos: UsosIA, motor: str, agora: datetime | None = None) -> tuple[str, str | None]:
+    """Motor a propor e o aviso: troca para o outro se o pedido bateu no limite há pouco."""
+    if motor not in MOTORES_EXTERNOS or not motor_em_limite(usos, motor, agora):
+        return motor, None
+    outro = outro_motor(motor)
+    quando = usos.limites[motor]
+    if motor_em_limite(usos, outro, agora):
+        return motor, (f"Claude e Gemini recusaram por limite nas últimas {HORAS_LIMITE} h; "
+                       "se negar, a tarefa segue no motor local e o pedido fica na fila.")
+    return outro, (f"O {motor.capitalize()} recusou por limite de uso em {quando:%d/%m %H:%M} UTC; "
+                   f"proponho o {outro.capitalize()} (você pode trocar de volta).")
+
+
+def prompt_para_outro_motor(usos: UsosIA, id_: str, novo_motor: str) -> tuple[str, str]:
+    """Prompt e arquivo de um uso recusado, ajustados para o outro motor (exige nova autorização)."""
+    uso = usos.buscar(id_)
+    if novo_motor not in MOTORES_EXTERNOS or novo_motor == uso.motor:
+        raise ValueError(f"Escolha o outro motor ({outro_motor(uso.motor)}).")
+    if not uso.arquivo_prompt or not Path(uso.arquivo_prompt).is_file():
+        raise ValueError(f"O prompt do uso {id_} não está mais em disco; gere o pedido de novo pelo comando da tarefa.")
+    prompt = Path(uso.arquivo_prompt).read_text(encoding="utf-8")
+    return trocar_motor_no_prompt(prompt, uso.nome_arquivo, uso.motor, novo_motor)
+
+
+def ultimo_aprovado(usos: UsosIA, tarefa: str, motor: str) -> UsoIA | None:
+    return next((u for u in reversed(usos.itens)
+                 if u.tarefa == tarefa and u.motor == motor and u.autorizacao == "aprovado"), None)
 
 
 def registrar_resultado(usos: UsosIA, tarefa: str, motor: str, resultado: str) -> UsoIA | None:
