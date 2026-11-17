@@ -15,7 +15,7 @@ dependencies = [
 ]
 
 [project.scripts]
-agente = "agente_carreira.cli:app"
+agente = "agente_carreira.cli:main"
 
 [project.gui-scripts]
 agente-app = "agente_carreira.app:main"

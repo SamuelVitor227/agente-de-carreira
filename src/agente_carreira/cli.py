@@ -1560,6 +1560,28 @@ def li_sincronizar(
         console.print(f"  • {escape(rotulo_do_campo(campo))}")
 
 
+@li_app.command("conectar")
+def li_conectar(
+    arquivo: Path = typer.Argument(..., exists=True, readable=True, help="ZIP de 'Obter uma cópia dos seus dados' do LinkedIn."),
+) -> None:
+    """Traz seus dados do LinkedIn pela exportação oficial: perfil-mestre (com confirmação) e estado atual do LinkedIn.
+
+    O agente não faz login no LinkedIn (RN-04): tudo vem do ZIP que você baixa.
+    """
+    if arquivo.suffix.lower() != ".zip":
+        console.print("[red]Use o ZIP da exportação do LinkedIn (Configurações e privacidade → Privacidade de dados → "
+                      "Obter uma cópia dos seus dados).[/red]")
+        raise typer.Exit(1)
+    console.print("[bold]1/2 · Dados do perfil[/bold] (confira tudo antes de aplicar)")
+    try:
+        importar(arquivo, confirmar=False)
+    except typer.Exit:
+        pass  # recusou ou não havia nada novo: o estado do LinkedIn ainda vale a pena registrar
+    console.print("\n[bold]2/2 · Estado atual do LinkedIn[/bold] (base para o antes × depois das propostas)")
+    li_sincronizar(arquivo)
+    console.print("\nPronto. Próximos passos: 'agente li auditar' e 'agente li propor'.")
+
+
 @li_app.command("propor")
 def li_propor(
     foco: str = typer.Option("backend-dotnet", "--foco"),
@@ -2398,5 +2420,16 @@ def ia_log(tarefa: str | None = typer.Option(None, "--tarefa", help="Filtra por 
     console.print("[dim]Os dados completos de cada pedido ficam em data/uso-ia.json.[/dim]")
 
 
+def main() -> None:
+    """Ponto de entrada do comando 'agente': sem perfil-mestre, orienta em vez de mostrar traceback."""
+    from .storage import PerfilAusente
+
+    try:
+        app()
+    except PerfilAusente as erro:
+        console.print(f"[yellow]{escape(str(erro))}[/yellow]")
+        raise SystemExit(1)
+
+
 if __name__ == "__main__":
-    app()
+    main()

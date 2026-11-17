@@ -17,6 +17,15 @@ from pathlib import Path
 
 NOME_APP = "Agente de Carreira"
 ARQUIVO_ICONE = "agente.ico"
+URL_EXPORTACAO_LINKEDIN = "https://www.linkedin.com/mypreferences/d/download-my-data"
+COMO_EXPORTAR_LINKEDIN = (
+    "O agente não faz login no LinkedIn: assim sua conta não corre risco de restrição (RN-04). "
+    "Seus dados entram pela exportação oficial:\n\n"
+    "1. No LinkedIn: Eu → Configurações e privacidade → Privacidade de dados → Obter uma cópia dos seus dados.\n"
+    "2. Marque o pacote completo (ou Perfil, Cargos, Formação, Competências e Conexões) e solicite.\n"
+    "3. O LinkedIn manda o link por e-mail (de minutos a 24 h). Baixe o ZIP.\n\n"
+    "Você já tem o ZIP?\n\nSim = escolher o arquivo · Não = abrir a página do LinkedIn para pedir"
+)
 
 
 def raiz_do_projeto() -> Path:
@@ -61,9 +70,11 @@ GRUPOS: list[tuple[str, list[Acao]]] = [
         Acao("Ver perfil", ("perfil", "mostrar")),
         Acao("Validar perfil", ("perfil", "validar")),
         Acao("Importar currículo…", ("importar",), escolher="arquivo"),
+        Acao("Conectar LinkedIn (ZIP)…", ("li", "conectar"), escolher="zip_linkedin"),
         Acao("Nota do CV (ATS)", ("cv", "nota")),
         Acao("Lacunas do CV", ("cv", "lacunas")),
         Acao("Auditar LinkedIn", ("li", "auditar")),
+        Acao("Propor alterações no LinkedIn", ("li", "propor")),
     ]),
     ("Relatórios e operação", [
         Acao("Relatório semanal", ("relatorio", "semanal")),
@@ -96,11 +107,16 @@ def executar_no_console(args: list[str]) -> int:
 
     from .cli import app
 
+    from .storage import PerfilAusente
+
     print(f"> agente {' '.join(args)}\n")
     codigo = 0
     try:
         resultado = get_command(app).main(args=args, prog_name="agente", standalone_mode=False)
         codigo = resultado if isinstance(resultado, int) else 0
+    except PerfilAusente as erro:
+        print(erro)
+        codigo = 1
     except KeyboardInterrupt:
         print("\nCancelado.")
     except SystemExit as saida:
@@ -133,7 +149,7 @@ def situacao() -> list[str]:
         from .storage import perfil_existe
 
         if not perfil_existe():
-            return ["Sem perfil-mestre ainda: comece por \"Importar currículo…\"."]
+            return ["Sem perfil-mestre ainda: comece por \"Importar currículo…\" ou \"Conectar LinkedIn (ZIP)…\"."]
         dados = Dados.carregar()
         limiar = carregar_config().limiar_alerta
         aplicadas = {c.vaga_id for c in dados.candidaturas.itens if foi_aplicada(c)}
@@ -314,6 +330,16 @@ def abrir_janela() -> None:
                 escolhido = filedialog.askopenfilename(
                     parent=janela, title="Escolha o currículo",
                     filetypes=[("Currículo", "*.pdf *.docx *.zip *.txt"), ("Todos os arquivos", "*.*")])
+            elif acao.escolher == "zip_linkedin":
+                tem_zip = messagebox.askyesnocancel(NOME_APP, COMO_EXPORTAR_LINKEDIN, parent=janela)
+                if tem_zip is None:
+                    return
+                if not tem_zip:
+                    webbrowser.open(URL_EXPORTACAO_LINKEDIN)
+                    return
+                escolhido = filedialog.askopenfilename(
+                    parent=janela, title="Escolha o ZIP baixado do LinkedIn",
+                    filetypes=[("Exportação do LinkedIn", "*.zip")])
             else:
                 escolhido = ""
         except Exception as erro:  # noqa: BLE001

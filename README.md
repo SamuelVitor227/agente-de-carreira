@@ -169,6 +169,7 @@ uv run agente candidatura registrar --vaga 1 --foco backend-dotnet  # guarda o C
 uv run agente li auditar                 # auditoria do LinkedIn (checklist Anexo A)
 uv run agente li titulo / sobre / experiencias / competencias       # textos do LinkedIn
 uv run agente li open-to-work / ajustes / alertas / rodada          # pacotes e passo a passo
+uv run agente li conectar export.zip     # traz o LinkedIn pela exportação oficial: perfil + estado atual
 uv run agente li sincronizar export.zip  # estado real do LinkedIn pela exportação oficial
 uv run agente li propor                  # antes × depois e aprovação campo a campo
 uv run agente li log / aplicado ID / reverter ID   # log de alterações com reversão
@@ -217,6 +218,10 @@ uv run agente auditoria / auditoria ver ID           # ações externas com ante
 uv run agente saude / saude reativar NOME            # adaptadores parados por erro ou layout novo
 uv run agente notificacoes teste         # testa o canal de notificação
 ```
+
+### LinkedIn
+
+O agente não faz login no LinkedIn: assim a sua conta não corre risco de restrição por automação (RN-04). Os dados entram pela exportação oficial. No LinkedIn, vá em Eu → Configurações e privacidade → Privacidade de dados → Obter uma cópia dos seus dados e baixe o ZIP. Depois rode `agente li conectar ARQUIVO.zip` (ou use o botão "Conectar LinkedIn (ZIP)…" do app). Ele preenche o perfil-mestre com a sua confirmação e registra o estado atual do perfil, que serve de base para as propostas de alteração. As alterações você aplica no LinkedIn, no modo copiloto.
 
 ### Modo assistido (Playwright)
 

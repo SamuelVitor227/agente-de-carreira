@@ -29,12 +29,23 @@ def perfil_existe() -> bool:
     return caminho_perfil().is_file()
 
 
+class PerfilAusente(FileNotFoundError):
+    """Ainda não há perfil-mestre: a CLI e o app mostram como começar, sem traceback."""
+
+
+COMO_COMECAR = (
+    "Você ainda não tem perfil-mestre. Comece por um destes:\n"
+    "  • seu currículo (PDF ou DOCX): botão \"Importar currículo…\" no app, ou 'agente importar ARQUIVO'\n"
+    "  • seus dados do LinkedIn (ZIP da exportação oficial): botão \"Conectar LinkedIn (ZIP)…\", "
+    "ou 'agente li conectar ARQUIVO.zip'\n"
+    "  • do zero, respondendo perguntas: 'agente perfil criar'"
+)
+
+
 def carregar_perfil() -> PerfilMestre:
     caminho = caminho_perfil()
     if not caminho.is_file():
-        raise FileNotFoundError(
-            f"Perfil-mestre não encontrado em {caminho}. Crie um com 'agente perfil criar'."
-        )
+        raise PerfilAusente(f"{COMO_COMECAR}\n(procurado em {caminho})")
     return PerfilMestre.model_validate_json(caminho.read_text(encoding="utf-8"))
 
 
