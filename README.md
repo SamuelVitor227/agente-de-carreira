@@ -66,6 +66,11 @@ Agente de IA para gestão de carreira: otimização de currículo, perfil no Lin
 | RF-LI-13 | Antes × depois com contagem de caracteres e aprovação campo a campo | ✅ Implementado |
 | RF-LI-14 | Log de cada alteração (data, campo, valor anterior e novo) com reversão | ✅ Implementado |
 | RF-LI-15 | Reauditoria a cada 30 dias ou quando o perfil-mestre mudar, com divergências LinkedIn × CV | ✅ Implementado |
+| RF-IA-01 | Motor por tipo de tarefa: Claude Pro, Gemini Pro ou local (padrão: perguntar a cada uso) | ✅ Implementado |
+| RF-IA-02 | Aviso do motor, da tarefa e dos dados antes de cada uso, com aprovar, trocar de motor ou negar | ✅ Implementado |
+| RF-IA-03 | Sem autorização nada é gerado; o pedido fica pendente na fila para autorizar ou descartar depois | ✅ Implementado |
+| RF-IA-04 | Filtro automático que remove e-mail, telefone, CPF, RG, CEP e endereço de todo prompt | ✅ Implementado |
+| RF-IA-05 | Registro de cada uso: data, motor, tarefa, dados enviados, removidos, autorização e resultado | ✅ Implementado |
 
 ## Como usar
 
@@ -112,7 +117,10 @@ uv run agente li reauditar               # reauditoria (30 dias ou perfil mudou)
 uv run agente li ingles preparar / registrar resposta.md --motor claude   # perfil em inglês
 uv run agente li recomendacao / convite  # rascunhos de mensagens, envio manual
 uv run agente li pauta                   # pauta de posts com seus repositórios públicos do GitHub
-uv run agente li post rascunho N --ia claude / editar / aprovar / publicado   # posts só com aprovação
+uv run agente li post rascunho N --ia / editar / aprovar / publicado   # posts só com aprovação
+uv run agente ia motores / motor TAREFA MOTOR   # motor de cada tarefa (claude, gemini, local, perguntar)
+uv run agente ia fila / autorizar ID / descartar ID   # pedidos de IA negados, pendentes de decisão
+uv run agente ia log                     # registro de cada uso de IA
 ```
 
 A pauta lê seus repositórios pelo [GitHub CLI](https://cli.github.com) (`gh auth login`), somente leitura; repositórios privados e forks ficam de fora.

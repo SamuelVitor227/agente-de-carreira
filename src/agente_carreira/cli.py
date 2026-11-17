@@ -82,15 +82,85 @@ def _prompt_multilinha(rotulo: str) -> list[str]:
         itens.append(linha)
 
 
-def _autorizar_ia(motor: str, tarefa: str, dados: list[str]) -> bool:
-    """Aviso do motor, da tarefa e dos dados enviados, com autorização a cada uso (RF-IA-02, RN-14)."""
-    console.print(Panel(
+def _perguntar_autorizacao(motor: str, descricao: str, dados: list[str], removidos: dict[str, int], caracteres: int) -> str:
+    """Aviso do motor, da tarefa e dos dados; devolve 's' (aprovar), 't' (trocar motor) ou 'n' (negar) — RF-IA-02."""
+    from .ia import outro_motor
+
+    corpo = (
         f"[bold]Motor:[/bold] {escape(motor)} (sua assinatura; você cola o prompt manualmente)\n"
-        f"[bold]Tarefa:[/bold] {escape(tarefa)}\n"
-        "[bold]Dados que vão no prompt:[/bold]\n" + "\n".join(f"  • {escape(d)}" for d in dados),
-        title="Autorização de uso de IA (RF-IA-02)", border_style="magenta",
-    ))
-    return typer.confirm("Autorizar e gerar o prompt?")
+        f"[bold]Tarefa:[/bold] {escape(descricao)}\n"
+        "[bold]Dados que vão no prompt:[/bold]\n" + "\n".join(f"  • {escape(d)}" for d in dados)
+    )
+    if removidos:
+        corpo += "\n[bold]Removidos automaticamente (RF-IA-04):[/bold] " + ", ".join(
+            f"{escape(tipo)} ({qtd})" for tipo, qtd in removidos.items()
+        )
+    corpo += f"\n[dim]Tamanho do prompt: {caracteres} caracteres[/dim]"
+    console.print(Panel(corpo, title="Autorização de uso de IA (RF-IA-02)", border_style="magenta"))
+    while True:
+        escolha = typer.prompt(f"Autoriza? [s]im, [t]rocar para {outro_motor(motor)} ou [n]ão").lstrip("﻿").strip().lower()[:1]
+        if escolha in {"s", "t", "n"}:
+            return escolha
+        console.print("Opção inválida.")
+
+
+def _perfil_ou_none() -> PerfilMestre | None:
+    """Perfil para o filtro de dados sensíveis, quando existir (comandos que não dependem dele)."""
+    return carregar_perfil() if perfil_existe() else None
+
+
+def _usar_ia(perfil, tarefa: str, motor_cli: str | None, dados: list[str], gerar_prompt, nome_arquivo):
+    """Motor da tarefa, autorização, dados mínimos e registro do uso (RF-IA-01 a RF-IA-05).
+
+    gerar_prompt(motor) e nome_arquivo(motor) montam o prompt e o arquivo para o motor escolhido.
+    Devolve o UsoIA aprovado, ou None se o motor é local ou o pedido foi negado (fica na fila).
+    """
+    from .ia import (
+        TAREFAS,
+        carregar_configuracao,
+        carregar_usos,
+        outro_motor,
+        registrar_pedido,
+        resolver_motor,
+        salvar_usos,
+        sanitizar,
+        valores_sensiveis,
+    )
+
+    try:
+        motor = resolver_motor(tarefa, motor_cli, carregar_configuracao())
+    except ValueError as erro:
+        console.print(f"[red]{escape(str(erro))}[/red]")
+        raise typer.Exit(1)
+    if motor == "local":
+        console.print(
+            f"[yellow]A tarefa '{tarefa}' está no motor local: nenhuma IA externa é usada e nenhum prompt foi gerado.[/yellow] "
+            f"Para usar IA nela: 'agente ia motor {tarefa} perguntar'."
+        )
+        return None
+
+    sensiveis = valores_sensiveis(perfil)
+    while True:
+        prompt, removidos = sanitizar(gerar_prompt(motor), sensiveis)
+        escolha = _perguntar_autorizacao(motor, TAREFAS[tarefa], dados, removidos, len(prompt))
+        if escolha != "t":
+            break
+        motor = outro_motor(motor)
+
+    usos = carregar_usos()
+    uso = registrar_pedido(
+        usos, tarefa=tarefa, descricao=TAREFAS[tarefa], motor=motor, dados=dados, prompt=prompt,
+        removidos=removidos, nome_arquivo=nome_arquivo(motor), autorizado=escolha == "s",
+    )
+    salvar_usos(usos)
+    if escolha == "n":
+        console.print(
+            f"Nada foi gerado nem enviado (RF-IA-03). O pedido [bold]{uso.id}[/bold] ficou pendente: "
+            "veja 'agente ia fila' para autorizar depois ou descartar."
+        )
+        return None
+    console.print(f"[green]Prompt gerado em[/green] {uso.arquivo_prompt}  [dim](uso de IA {uso.id} registrado)[/dim]")
+    return uso
 
 
 # ---------------------------------------------------------------- perfil
@@ -743,36 +813,26 @@ def cv_exportar(
 def cv_reescrever(
     foco: str | None = typer.Option(None, "--foco"),
     limite: int = typer.Option(30, "--limite"),
-    motor: str = typer.Option("claude", "--motor", help="Motor de IA: claude ou gemini."),
+    motor: str | None = typer.Option(None, "--motor", help="claude, gemini ou local; padrão: o configurado para a tarefa ('agente ia motores')."),
 ) -> None:
-    """Prepara a reescrita do resumo/experiências/projetos em modo copiloto (RF-CV-03, RF-IA-02)."""
-    from .analise.reescrita import MOTORES, dados_enviados, montar_prompt
+    """Prepara a reescrita do resumo/experiências/projetos em modo copiloto (RF-CV-03, RF-IA-01 a RF-IA-05)."""
+    from .analise.reescrita import dados_enviados, montar_prompt
     from .analise.termos import extrair_termos
 
-    if motor not in MOTORES:
-        console.print(f"[red]Motor desconhecido: {motor}. Use um de: {', '.join(MOTORES)}.[/red]")
-        raise typer.Exit(1)
     perfil = carregar_perfil()
     conjunto = _conjunto_ou_sai(foco, limite)
     termos = extrair_termos(conjunto)
-
-    tarefa = (
-        "reescrever resumo, experiências e projetos no padrão verbo de ação + feito + resultado + "
-        f"tecnologia, usando termos de {len(conjunto)} vaga(s)"
+    dados = dados_enviados(perfil)
+    dados.insert(len(dados) - 1, f"termos mais frequentes de {len(conjunto)} vaga(s)-alvo")
+    uso = _usar_ia(
+        perfil, "reescrita-cv", motor, dados,
+        lambda m: montar_prompt(perfil, termos, m),
+        lambda m: f"prompt-reescrita-{foco or 'geral'}-{m}.md",
     )
-    if not _autorizar_ia(motor, tarefa, dados_enviados(perfil)):
-        console.print("Uso de IA não autorizado; nada foi gerado.")
+    if uso is None:
         raise typer.Exit(0)
-
-    prompt = montar_prompt(perfil, termos, motor)
-    destino = diretorio_dados() / "saidas" / f"prompt-reescrita-{foco or 'geral'}-{motor}.md"
-    destino.parent.mkdir(parents=True, exist_ok=True)
-    destino.write_text(prompt, encoding="utf-8")
-    console.print(f"[green]Prompt gerado em[/green] {destino}")
     console.print(
-        "Cole o conteúdo no "
-        + ("Claude" if motor == "claude" else "Gemini")
-        + ", revise a resposta e aplique no perfil só o que for verdadeiro "
+        f"Cole o conteúdo no {uso.motor.capitalize()}, revise a resposta e aplique no perfil só o que for verdadeiro "
         "(frases [A CONFIRMAR] exigem sua confirmação — RN-02)."
     )
 
@@ -1491,31 +1551,26 @@ def ingles_preparar(
     foco: str = typer.Option("backend-dotnet", "--foco"),
     cargo: str | None = typer.Option(None, "--cargo", help="Cargo-alvo do título."),
     opcao: int = typer.Option(1, "--opcao", help="Qual das opções de 'agente li titulo' traduzir."),
-    motor: str = typer.Option("claude", "--motor", help="claude ou gemini."),
+    motor: str | None = typer.Option(None, "--motor", help="claude, gemini ou local; padrão: o configurado para a tarefa."),
 ) -> None:
-    """Monta o pacote de tradução do perfil para inglês, com autorização de IA (RF-LI-10)."""
-    from .analise.reescrita import MOTORES
+    """Monta o pacote de tradução do perfil para inglês, com autorização de IA (RF-LI-10, RF-IA-01 a RF-IA-05)."""
     from .linkedin.ingles import dados_enviados, montar_prompt, textos_fonte
 
-    if motor not in MOTORES:
-        console.print(f"[red]Motor desconhecido: {escape(motor)}. Use um de: {', '.join(MOTORES)}.[/red]")
-        raise typer.Exit(1)
     perfil = carregar_perfil()
     fontes = textos_fonte(perfil, foco, _cargo_alvo(perfil, cargo), opcao_titulo=opcao)
     if not fontes:
         console.print("[yellow]Perfil sem material para traduzir (título, Sobre ou experiências).[/yellow]")
         raise typer.Exit(1)
-    tarefa = "traduzir para inglês o título, o Sobre e as experiências do LinkedIn (perfil secundário)"
-    if not _autorizar_ia(motor, tarefa, dados_enviados(fontes)):
-        console.print("Uso de IA não autorizado; nada foi gerado.")
+    uso = _usar_ia(
+        perfil, "traducao-linkedin", motor, dados_enviados(fontes),
+        lambda m: montar_prompt(fontes, m),
+        lambda m: f"prompt-linkedin-en-{m}.md",
+    )
+    if uso is None:
         raise typer.Exit(0)
-    destino = diretorio_dados() / "saidas" / f"prompt-linkedin-en-{motor}.md"
-    destino.parent.mkdir(parents=True, exist_ok=True)
-    destino.write_text(montar_prompt(fontes, motor), encoding="utf-8")
-    console.print(f"[green]Prompt gerado em[/green] {destino}")
     console.print(
-        f"Cole no {motor.capitalize()}, salve a resposta num arquivo .md e rode: "
-        f"agente li ingles registrar <resposta.md> --motor {motor}"
+        f"Cole no {uso.motor.capitalize()}, salve a resposta num arquivo .md e rode: "
+        f"agente li ingles registrar <resposta.md> --motor {uso.motor}"
     )
 
 
@@ -1529,10 +1584,15 @@ def ingles_registrar(
     from .linkedin.ingles import PASSOS_PERFIL_INGLES, ler_resposta
     from .linkedin.propostas import propostas_de_textos
 
+    from .ia import carregar_usos, registrar_resultado, salvar_usos
+
     textos = ler_resposta(arquivo.read_text(encoding="utf-8"))
     if not textos:
         console.print("[red]Nenhum campo reconhecido — a resposta precisa manter as linhas '### CAMPO: en:...'.[/red]")
         raise typer.Exit(1)
+    usos = carregar_usos()
+    if registrar_resultado(usos, "traducao-linkedin", motor, f"resposta registrada: {len(textos)} campo(s) traduzido(s)"):
+        salvar_usos(usos)
     propostas = propostas_de_textos(carregar_estado(), textos)
     if not propostas:
         console.print("[green]Todos os campos já estão iguais ao perfil em inglês conhecido.[/green]")
@@ -1631,10 +1691,10 @@ def li_pauta(
 @post_app.command("rascunho")
 def post_rascunho(
     numero: int = typer.Argument(..., help="Número do item em 'agente li pauta'."),
-    ia: str | None = typer.Option(None, "--ia", help="claude ou gemini: gera também o prompt de polimento (com autorização)."),
+    ia: bool = typer.Option(False, "--ia", help="Gera também o prompt de polimento com IA (com autorização)."),
+    motor: str | None = typer.Option(None, "--motor", help="claude, gemini ou local; padrão: o configurado para a tarefa."),
 ) -> None:
     """Rascunho de publicação só com fatos registrados; polimento opcional com IA (RF-LI-12)."""
-    from .analise.reescrita import MOTORES
     from .linkedin.github import ler_readme
     from .linkedin.publicacoes import (
         Publicacao,
@@ -1653,10 +1713,6 @@ def post_rascunho(
     if not 1 <= numero <= len(pauta.itens):
         console.print(f"[red]Item {numero} não existe na pauta ({len(pauta.itens)} itens).[/red]")
         raise typer.Exit(1)
-    if ia and ia not in MOTORES:
-        console.print(f"[red]Motor desconhecido: {escape(ia)}. Use um de: {', '.join(MOTORES)}.[/red]")
-        raise typer.Exit(1)
-
     item = pauta.itens[numero - 1]
     texto = rascunho_publicacao(item)
     colecao = carregar_publicacoes()
@@ -1667,15 +1723,15 @@ def post_rascunho(
 
     if ia:
         readme = ler_readme(item.url) if item.url else None
-        tarefa = f"melhorar o texto do post sobre '{item.titulo}' sem inventar fatos"
-        if _autorizar_ia(ia, tarefa, dados_enviados_polimento(item, readme is not None)):
-            destino = diretorio_dados() / "saidas" / "posts" / f"prompt-post-{pub.id}-{ia}.md"
-            destino.parent.mkdir(parents=True, exist_ok=True)
-            destino.write_text(prompt_polimento(item, texto, readme, ia), encoding="utf-8")
-            console.print(f"[green]Prompt gerado em[/green] {destino}")
-            console.print(f"Salve a resposta e rode: agente li post editar {pub.id} --arquivo <resposta.md> --motor {ia}")
+        uso = _usar_ia(
+            _perfil_ou_none(), "polimento-post", motor, dados_enviados_polimento(item, readme is not None),
+            lambda m: prompt_polimento(item, texto, readme, m),
+            lambda m: f"posts/prompt-post-{pub.id}-{m}.md",
+        )
+        if uso:
+            console.print(f"Salve a resposta e rode: agente li post editar {pub.id} --arquivo <resposta.md> --motor {uso.motor}")
         else:
-            console.print("Uso de IA não autorizado; fica o rascunho local.")
+            console.print("Fica o rascunho local, sem IA.")
     console.print(f"Para publicar: revise, aprove com 'agente li post aprovar {pub.id}' e publique você mesmo no LinkedIn.")
 
 
@@ -1696,6 +1752,12 @@ def post_editar(
         console.print(f"[red]{escape(str(erro))}[/red]")
         raise typer.Exit(1)
     salvar_publicacoes(colecao)
+    if motor:
+        from .ia import carregar_usos, registrar_resultado, salvar_usos
+
+        usos = carregar_usos()
+        if registrar_resultado(usos, "polimento-post", motor, f"resposta registrada no post {pub.id}"):
+            salvar_usos(usos)
     problemas = validar_publicacao(pub.texto)
     console.print(Panel(Text(pub.texto), title=f"{pub.id} · {len(pub.texto)}/3000 caracteres · escrito por: {pub.motor or 'você/agente'}",
                         border_style="yellow" if problemas else "cyan"))
@@ -1773,6 +1835,131 @@ def post_publicado(id_: str = typer.Argument(..., metavar="ID")) -> None:
         raise typer.Exit(1)
     salvar_publicacoes(colecao)
     console.print(f"[green]Registrada como publicada.[/green]")
+
+
+# ---------------------------------------------------------------- uso de IA (RF-IA-01 a RF-IA-05)
+
+ia_app = typer.Typer(help="Uso de IA: motor por tarefa, fila de pedidos e registro (RF-IA-01 a RF-IA-05).", no_args_is_help=True)
+app.add_typer(ia_app, name="ia")
+
+
+@ia_app.command("motores")
+def ia_motores() -> None:
+    """Mostra o motor configurado para cada tarefa (RF-IA-01)."""
+    from .ia import TAREFAS, carregar_configuracao
+
+    config = carregar_configuracao()
+    tabela = Table(title="Motor por tarefa")
+    tabela.add_column("Tarefa")
+    tabela.add_column("Descrição", overflow="fold")
+    tabela.add_column("Motor")
+    for tarefa, descricao in TAREFAS.items():
+        tabela.add_row(tarefa, descricao, config.motor_da_tarefa(tarefa))
+    console.print(tabela)
+    console.print("'perguntar' propõe o Claude e você pode trocar no pedido; 'local' não usa IA externa. "
+                  "Mude com 'agente ia motor TAREFA MOTOR'.")
+
+
+@ia_app.command("motor")
+def ia_motor(
+    tarefa: str = typer.Argument(..., help="Tarefa (veja 'agente ia motores')."),
+    motor: str = typer.Argument(..., help="claude, gemini, local ou perguntar."),
+) -> None:
+    """Define o motor padrão de uma tarefa (RF-IA-01)."""
+    from .ia import carregar_configuracao, definir_motor, salvar_configuracao
+
+    config = carregar_configuracao()
+    try:
+        definir_motor(config, tarefa, motor)
+    except ValueError as erro:
+        console.print(f"[red]{escape(str(erro))}[/red]")
+        raise typer.Exit(1)
+    salvar_configuracao(config)
+    console.print(f"[green]{escape(tarefa)} → {escape(motor)}.[/green] A autorização continua sendo pedida a cada uso (RN-14).")
+
+
+@ia_app.command("fila")
+def ia_fila() -> None:
+    """Pedidos de IA negados, pendentes de decisão (RF-IA-03)."""
+    from .ia import carregar_usos
+
+    pendentes = carregar_usos().pendentes()
+    if not pendentes:
+        console.print("Nenhum pedido de IA pendente.")
+        return
+    tabela = Table(title=f"Pedidos de IA pendentes ({len(pendentes)})")
+    for col in ("ID", "Pedido em", "Tarefa", "Motor", "Tamanho"):
+        tabela.add_column(col)
+    for u in pendentes:
+        tabela.add_row(u.id, f"{u.pedido_em:%d/%m/%Y %H:%M}", u.tarefa, u.motor, f"{u.caracteres} caracteres")
+    console.print(tabela)
+    console.print("Autorize com 'agente ia autorizar ID' ou descarte com 'agente ia descartar ID'.")
+
+
+@ia_app.command("autorizar")
+def ia_autorizar(id_: str = typer.Argument(..., metavar="ID")) -> None:
+    """Autoriza um pedido pendente: gera o prompt agora, podendo trocar de motor (RF-IA-02, RF-IA-03)."""
+    from .ia import autorizar_pendente, carregar_usos, outro_motor, salvar_usos
+
+    usos = carregar_usos()
+    try:
+        uso = usos.buscar(id_)
+    except ValueError as erro:
+        console.print(f"[red]{escape(str(erro))}[/red]")
+        raise typer.Exit(1)
+    if uso.autorizacao != "pendente":
+        console.print(f"[red]O uso {id_} não está pendente (status: {uso.autorizacao}).[/red]")
+        raise typer.Exit(1)
+    motor = uso.motor
+    while True:
+        escolha = _perguntar_autorizacao(motor, uso.descricao, uso.dados, uso.removidos, uso.caracteres)
+        if escolha != "t":
+            break
+        motor = outro_motor(motor)
+    if escolha == "n":
+        console.print("Continua pendente; nada foi gerado.")
+        raise typer.Exit(0)
+    autorizar_pendente(usos, id_, motor=motor)
+    salvar_usos(usos)
+    console.print(f"[green]Prompt gerado em[/green] {uso.arquivo_prompt}  [dim](uso {uso.id}, motor {uso.motor})[/dim]")
+
+
+@ia_app.command("descartar")
+def ia_descartar(id_: str = typer.Argument(..., metavar="ID")) -> None:
+    """Descarta um pedido pendente; nada é gerado nem enviado."""
+    from .ia import carregar_usos, descartar_pendente, salvar_usos
+
+    usos = carregar_usos()
+    try:
+        descartar_pendente(usos, id_)
+    except ValueError as erro:
+        console.print(f"[red]{escape(str(erro))}[/red]")
+        raise typer.Exit(1)
+    salvar_usos(usos)
+    console.print(f"[green]Pedido {id_} descartado.[/green]")
+
+
+@ia_app.command("log")
+def ia_log(tarefa: str | None = typer.Option(None, "--tarefa", help="Filtra por tarefa.")) -> None:
+    """Registro de cada uso de IA: data, motor, tarefa, dados, autorização e resultado (RF-IA-05)."""
+    from .ia import carregar_usos
+
+    usos = [u for u in carregar_usos().itens if tarefa is None or u.tarefa == tarefa]
+    if not usos:
+        console.print("Nenhum uso de IA registrado.")
+        return
+    tabela = Table(title=f"Registro de uso de IA ({len(usos)})")
+    for col in ("ID", "Pedido em", "Tarefa", "Motor", "Autorização", "Dados enviados", "Removidos", "Resultado"):
+        tabela.add_column(col, overflow="fold")
+    for u in reversed(usos):
+        removidos = ", ".join(f"{t} ({q})" for t, q in u.removidos.items()) or "—"
+        enviados = "; ".join(d.split(":")[0] for d in u.dados if not d.startswith("NÃO"))
+        tabela.add_row(
+            u.id, f"{u.pedido_em:%d/%m/%Y %H:%M}", u.tarefa, u.motor, u.autorizacao,
+            Text(_curto(enviados, 60)), Text(removidos), Text(u.resultado or ""),
+        )
+    console.print(tabela)
+    console.print("[dim]Os dados completos de cada pedido ficam em data/uso-ia.json.[/dim]")
 
 
 if __name__ == "__main__":
