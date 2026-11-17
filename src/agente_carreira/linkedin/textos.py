@@ -41,36 +41,51 @@ class OpcaoTitulo(BaseModel):
     essencial_nos_primeiros_60: bool
 
 
-def gerar_titulos(perfil: PerfilMestre, foco: str, cargo_alvo: str) -> list[OpcaoTitulo]:
-    """3 opções de título: cargo-alvo + stack + diferencial (RF-LI-02)."""
-    stack = " · ".join(_stack_do_foco(perfil, foco))
-    formacao = perfil.formacao[0] if perfil.formacao else None
-    diferencial_formacao = f"{formacao.curso} — {formacao.instituicao}" if formacao else None
-    certificacao = perfil.certificacoes[0].nome if perfil.certificacoes else None
+ROTULOS_FOCO = {
+    "backend-dotnet": "Backend .NET", "cloud-aws": "Cloud AWS", "mobile": "Mobile", "dados": "Dados", "suporte": "Suporte",
+}
 
-    candidatos = [
-        " | ".join(p for p in [cargo_alvo, stack, diferencial_formacao] if p),
-        " | ".join(p for p in [f"{cargo_alvo} em formação" if formacao else cargo_alvo, stack] if p),
-        " | ".join(p for p in [cargo_alvo, stack, certificacao] if p)
-        if certificacao
-        else " | ".join(p for p in [diferencial_formacao, stack] if p),
+
+def gerar_titulos(perfil: PerfilMestre, foco: str, cargo_alvo: str) -> list[OpcaoTitulo]:
+    """3 opções de título, todas com o cargo-alvo no começo + stack + um diferencial (RF-LI-02, CA-05).
+
+    Os diferenciais saem só do perfil-mestre (RN-02): formação, certificação e projetos.
+    """
+    cargo_alvo = " ".join(cargo_alvo.split())
+    stack_curta = " · ".join(_stack_do_foco(perfil, foco, maximo=3))
+    stack_longa = " · ".join(_stack_do_foco(perfil, foco, maximo=5))
+    formacao = perfil.formacao[0] if perfil.formacao else None
+    projetos = [p.nome for p in perfil.projetos if p.tecnologias][:2]
+    diferenciais = [d for d in [
+        f"{formacao.curso} — {formacao.instituicao}" if formacao else None,
+        perfil.certificacoes[0].nome if perfil.certificacoes else None,
+        f"Projetos: {', '.join(projetos)}" if projetos else None,
+    ] if d]
+
+    candidatos = [" | ".join(p for p in [cargo_alvo, stack_curta, d] if p) for d in diferenciais]
+    candidatos += [
+        " | ".join(p for p in [cargo_alvo, stack_longa] if p),
+        " | ".join(p for p in [f"{cargo_alvo} em formação", stack_curta] if p) if formacao else "",
+        " | ".join(p for p in [cargo_alvo, stack_curta, f"Foco em {ROTULOS_FOCO.get(foco, foco)}"] if p),
+        " | ".join(p for p in [cargo_alvo, f"Foco em {ROTULOS_FOCO.get(foco, foco)}"] if p),
+        cargo_alvo,
     ]
 
     opcoes: list[OpcaoTitulo] = []
     for texto in candidatos:
+        while len(texto) > LIMITES["titulo"] and " | " in texto:
+            texto = texto.rsplit(" | ", 1)[0]  # corta o último bloco para caber nos 220
         if not texto or any(texto == o.texto for o in opcoes):
             continue
-        inicio = _norm(texto[: LIMITES["titulo_trecho_visivel"]])
-        tem_essencial = _norm(cargo_alvo.split()[0]) in inicio or any(
-            _norm(s) in inicio for s in _stack_do_foco(perfil, foco, maximo=2)
-        )
         opcoes.append(OpcaoTitulo(
             texto=texto,
             caracteres=len(texto),
             dentro_do_limite=len(texto) <= LIMITES["titulo"],
-            essencial_nos_primeiros_60=tem_essencial,
+            essencial_nos_primeiros_60=_norm(cargo_alvo) in _norm(texto[: LIMITES["titulo_trecho_visivel"]]),
         ))
-    return opcoes[:3]
+        if len(opcoes) == 3:
+            break
+    return opcoes
 
 
 # ---------------------------------------------------------------- RF-LI-03

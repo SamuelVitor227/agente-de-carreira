@@ -129,11 +129,28 @@ class UsoIA(BaseModel):
     prompt_pendente: str | None = None                       # guardado só enquanto pendente
     recusado_por_limite: bool = False                        # RF-IA-07
     substitui: str | None = None                             # uso recusado que este refaz em outro motor
+    lote: str | None = None                                  # RF-IA-08: autorização em lote que cobriu o uso
+
+
+class AutorizacaoLote(BaseModel):
+    """RF-IA-08: autorização em lote, só criada pelo usuário, com prazo e revogável."""
+
+    id: str = Field(default_factory=lambda: uuid4().hex[:6])
+    tarefas: list[str]
+    motor: str | None = None                                 # None = Claude ou Gemini
+    criada_em: datetime = Field(default_factory=_agora)
+    valida_ate: datetime
+    revogada_em: datetime | None = None
+    usos: list[str] = Field(default_factory=list)
+
+    def ativa(self, agora: datetime | None = None) -> bool:
+        return self.revogada_em is None and (agora or _agora()) < self.valida_ate
 
 
 class UsosIA(BaseModel):
     itens: list[UsoIA] = Field(default_factory=list)
     limites: dict[str, datetime] = Field(default_factory=dict)  # motor → quando recusou por limite (RF-IA-07)
+    lotes: list[AutorizacaoLote] = Field(default_factory=list)  # RF-IA-08
 
     def buscar(self, id_: str) -> UsoIA:
         for uso in self.itens:
@@ -185,12 +202,18 @@ def registrar_pedido(
     nome_arquivo: str,
     autorizado: bool,
     substitui: str | None = None,
+    lote: str | None = None,
 ) -> UsoIA:
     """Registra o pedido; se autorizado, gera o prompt, senão deixa pendente sem gerar nada."""
     uso = UsoIA(
         tarefa=tarefa, descricao=descricao, motor=motor, dados=dados, removidos=removidos,
-        caracteres=len(prompt), nome_arquivo=nome_arquivo, substitui=substitui,
+        caracteres=len(prompt), nome_arquivo=nome_arquivo, substitui=substitui, lote=lote,
     )
+    if lote:
+        autorizacao = next((l for l in usos.lotes if l.id == lote), None)
+        if autorizacao is None or not autorizacao.ativa():
+            raise ValueError(f"A autorização em lote {lote} não está ativa.")
+        autorizacao.usos.append(uso.id)
     if autorizado:
         uso.autorizacao = "aprovado"
         uso.autorizado_em = _agora()
@@ -298,6 +321,49 @@ def prompt_para_outro_motor(usos: UsosIA, id_: str, novo_motor: str) -> tuple[st
         raise ValueError(f"O prompt do uso {id_} não está mais em disco; gere o pedido de novo pelo comando da tarefa.")
     prompt = Path(uso.arquivo_prompt).read_text(encoding="utf-8")
     return trocar_motor_no_prompt(prompt, uso.nome_arquivo, uso.motor, novo_motor)
+
+
+# ---------------------------------------------------------------- RF-IA-08
+
+HORAS_MAXIMAS_LOTE = 24
+
+
+def fim_do_dia(agora: datetime | None = None) -> datetime:
+    """23:59 de hoje no fuso local, em UTC."""
+    local = (agora or _agora()).astimezone()
+    return local.replace(hour=23, minute=59, second=0, microsecond=0).astimezone(timezone.utc)
+
+
+def criar_lote(usos: UsosIA, tarefas: list[str], valida_ate: datetime, motor: str | None = None,
+               agora: datetime | None = None) -> AutorizacaoLote:
+    agora = agora or _agora()
+    desconhecidas = [t for t in tarefas if t not in TAREFAS]
+    if not tarefas or desconhecidas:
+        raise ValueError(f"Informe tarefas válidas ({', '.join(TAREFAS)}).")
+    if motor is not None and motor not in MOTORES_EXTERNOS:
+        raise ValueError("O motor do lote deve ser claude ou gemini (ou nenhum, para os dois).")
+    if valida_ate <= agora:
+        raise ValueError("O prazo do lote já passou.")
+    if (valida_ate - agora).total_seconds() > HORAS_MAXIMAS_LOTE * 3600:
+        raise ValueError(f"Um lote vale no máximo {HORAS_MAXIMAS_LOTE} horas.")
+    lote = AutorizacaoLote(tarefas=list(dict.fromkeys(tarefas)), motor=motor, criada_em=agora, valida_ate=valida_ate)
+    usos.lotes.append(lote)
+    return lote
+
+
+def lote_que_cobre(usos: UsosIA, tarefa: str, motor: str, agora: datetime | None = None) -> AutorizacaoLote | None:
+    return next((l for l in reversed(usos.lotes)
+                 if l.ativa(agora) and tarefa in l.tarefas and (l.motor is None or l.motor == motor)), None)
+
+
+def revogar_lote(usos: UsosIA, id_: str) -> AutorizacaoLote:
+    lote = next((l for l in usos.lotes if l.id == id_), None)
+    if lote is None:
+        raise ValueError(f"Autorização em lote {id_!r} não existe.")
+    if lote.revogada_em is not None:
+        raise ValueError(f"O lote {id_} já foi revogado.")
+    lote.revogada_em = _agora()
+    return lote
 
 
 def ultimo_aprovado(usos: UsosIA, tarefa: str, motor: str) -> UsoIA | None:

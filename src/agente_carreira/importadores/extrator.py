@@ -47,8 +47,41 @@ def extrair_de_texto(texto: str, origem: str) -> ResultadoImportacao:
             resultado.telefone = candidato
 
     resultado.outros_links = _outros_links(texto, excluir=[resultado.github, resultado.linkedin])
-    resultado.competencias = _detectar_tecnologias(texto)
+    _aplicar_secoes(resultado, texto)
     return resultado
+
+
+def _aplicar_secoes(resultado: ResultadoImportacao, texto: str) -> None:
+    """Completa a extração com o que as seções do CV dizem (objetivo, projetos, experiências...)."""
+    from ..models import ExperienciaRascunho, FormacaoRascunho
+    from .resultado import CertificacaoRascunho, IdiomaRascunho, ProjetoRascunho
+    from .secoes import ler_secoes
+
+    secoes = ler_secoes(texto)
+    resultado.nome = secoes.nome
+    resultado.cidade, resultado.uf = secoes.cidade, secoes.uf
+    resultado.objetivo = secoes.objetivo
+    resultado.resumo = secoes.resumo
+    competencias = list(secoes.competencias)
+    for tecnologia in _detectar_tecnologias(texto):
+        # "HTML" já está em "HTML5", "AWS" em "AWS (fundamentos)"; "Java" não está em "JavaScript".
+        coberta = re.compile(rf"(?<![a-z0-9]){re.escape(tecnologia.lower())}(?![a-z])")
+        if not any(coberta.search(c.lower()) for c in competencias):
+            competencias.append(tecnologia)
+    resultado.competencias = competencias
+    resultado.idiomas = [IdiomaRascunho(idioma=i, nivel=n) for i, n in secoes.idiomas]
+    resultado.projetos = [ProjetoRascunho(nome=p.nome, tecnologias=p.tecnologias, descricao=p.descricao) for p in secoes.projetos]
+    resultado.experiencias = [
+        ExperienciaRascunho(cargo=e.cargo, empresa=e.empresa, periodo_texto=e.periodo, descricao=e.descricao,
+                            origem=resultado.origem)
+        for e in secoes.experiencias
+    ]
+    resultado.formacoes = [
+        FormacaoRascunho(curso=f.curso, instituicao=f.instituicao, periodo_texto=f.periodo, observacoes=f.observacoes,
+                         origem=resultado.origem)
+        for f in secoes.formacoes
+    ]
+    resultado.certificacoes = [CertificacaoRascunho(nome=c.nome, emissor=c.emissor, data_texto=c.data) for c in secoes.certificacoes]
 
 
 def _normalizar_url(url: str) -> str:

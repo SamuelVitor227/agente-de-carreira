@@ -272,7 +272,9 @@ def vagas_rodada(
     for falha in resultado.falhas_adaptadores:
         console.print(f"[red]Adaptador parado (RF-OP-07): {escape(falha)}[/red]")
     console.print(f"[green]Resumo salvo em[/green] {resultado.arquivo_resumo}")
-    if resultado.pedido_ia:
+    if resultado.pedido_ia and resultado.pedido_ia_autorizado:
+        console.print(f"Prompt da justificativa por IA gerado pela autorização em lote (uso {resultado.pedido_ia}); veja 'agente ia log'.")
+    elif resultado.pedido_ia:
         console.print(f"Justificativa escrita por IA na fila de aprovações: 'agente fila' (item ia:{resultado.pedido_ia}).")
     _notificar_rodada(resultado, central, config)
 
@@ -290,7 +292,7 @@ def _notificar_rodada(resultado, central, config) -> None:
             "vaga_acima_limiar", f"{len(alertas)} vaga(s) com aderência ≥ {config.limiar_alerta}",
             "\n".join(f"- {v.titulo} — {v.empresa or '?'} ({v.nota}): {v.link or 'sem link'}" for v in alertas), central,
         ))
-    if resultado.pedido_ia:
+    if resultado.pedido_ia and not resultado.pedido_ia_autorizado:
         envios.append(notificar(
             "pedido_aprovacao", "Pedido de aprovação na fila",
             f"A justificativa escrita das vagas de hoje espera sua autorização: agente fila (item ia:{resultado.pedido_ia}).",

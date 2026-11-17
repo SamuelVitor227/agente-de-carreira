@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
-from ..ia import TAREFAS, carregar_usos, registrar_pedido, salvar_usos, sanitizar, valores_sensiveis
+from ..ia import TAREFAS, carregar_usos, lote_que_cobre, registrar_pedido, salvar_usos, sanitizar, valores_sensiveis
 from ..models import PerfilMestre
 from ..operacao.saude import RegistroSaude, problema_no_email
 from .aderencia import IndiceTFIDF, calcular_aderencia, documento_perfil, documento_vaga
@@ -35,7 +35,7 @@ from .coleta import (
 from .dedup import incorporar, mesclar
 from .extracao import analisar_html, extrair_campos, jobpostings
 from .filtros import PADRAO_ENCERRADA, avaliar_filtros, motivo_expiracao, sinais_estagio, sinais_risco
-from .modelos import BaseVagas, ConfigVagas, Fonte, VagaBruta, VagaEncontrada
+from .modelos import BaseVagas, ConfigVagas, Fonte, RegistroRodada, VagaBruta, VagaEncontrada
 from .resumo import (
     Resumo,
     dados_enviados_justificativa,
@@ -300,13 +300,19 @@ def processar(
 
 # ---------------------------------------------------------------- rodada completa
 
-def pedir_justificativa(vagas: list[VagaEncontrada], perfil: PerfilMestre, motor_configurado: str, hoje: date) -> str | None:
-    """A justificativa escrita fica pendente na fila de IA até o usuário autorizar (RF-IA-03)."""
+def pedir_justificativa(vagas: list[VagaEncontrada], perfil: PerfilMestre, motor_configurado: str, hoje: date):
+    """Justificativa escrita por IA: pendente na fila até o usuário autorizar (RF-IA-03), ou
+    gerada direto se houver uma autorização em lote ativa para a tarefa (RF-IA-08)."""
     if not vagas or motor_configurado == "local":
         return None
     motor = "claude" if motor_configurado == "perguntar" else motor_configurado
-    prompt, removidos = sanitizar(prompt_justificativas(vagas, perfil, motor), valores_sensiveis(perfil))
     usos = carregar_usos()
+    lote = lote_que_cobre(usos, "justificativa-vagas", motor)
+    if lote is None and motor_configurado == "perguntar":
+        outro = lote_que_cobre(usos, "justificativa-vagas", "gemini")
+        if outro is not None:
+            motor, lote = "gemini", outro
+    prompt, removidos = sanitizar(prompt_justificativas(vagas, perfil, motor), valores_sensiveis(perfil))
     # Um pedido de justificativa por vez na fila: o de hoje substitui o que ainda não foi decidido.
     for antigo in usos.pendentes():
         if antigo.tarefa == "justificativa-vagas":
@@ -316,10 +322,11 @@ def pedir_justificativa(vagas: list[VagaEncontrada], perfil: PerfilMestre, motor
     uso = registrar_pedido(
         usos, tarefa="justificativa-vagas", descricao=TAREFAS["justificativa-vagas"], motor=motor,
         dados=dados_enviados_justificativa(vagas), prompt=prompt, removidos=removidos,
-        nome_arquivo=f"prompt-justificativas-{hoje:%Y-%m-%d}-{motor}.md", autorizado=False,
+        nome_arquivo=f"prompt-justificativas-{hoje:%Y-%m-%d}-{motor}.md", autorizado=lote is not None,
+        lote=lote.id if lote is not None else None,
     )
     salvar_usos(usos)
-    return uso.id
+    return uso
 
 
 @dataclass
@@ -330,6 +337,7 @@ class ResultadoRodada:
     arquivo_resumo: Path
     erros: list[str]
     pedido_ia: str | None
+    pedido_ia_autorizado: bool = False  # RF-IA-08: gerado direto por uma autorização em lote
     falhas_adaptadores: list[str] = field(default_factory=list)
 
 
@@ -340,6 +348,7 @@ def executar_rodada(
     enriquecer_links: bool = True, verificar_links: bool = False, motor_justificativa: str = "perguntar",
     saude: RegistroSaude | None = None, pode_ler: PodeLer = _sempre,
 ) -> ResultadoRodada:
+    inicio = datetime.now(timezone.utc)
     brutas, erros, falhas = coletar(
         config, base, hoje, pasta_emails=pasta_emails, imap=imap, imap_factory=imap_factory,
         baixar_fn=baixar_fn, dormir=dormir, usar_paginas=usar_paginas, saude=saude, pode_ler=pode_ler,
@@ -355,9 +364,15 @@ def executar_rodada(
     arquivo = salvar_resumo(resumo, config)
     vagas_do_resumo = [base.buscar(i.id) for i in resumo.itens]
     marcar_no_resumo(base, resumo)
-    base.ultima_rodada = datetime.now(timezone.utc)
+    fim = datetime.now(timezone.utc)
+    base.ultima_rodada = fim
     pedido = pedir_justificativa(vagas_do_resumo, perfil, motor_justificativa, hoje)
+    base.registrar_rodada(RegistroRodada(  # CA-08 e RNF-11/RNF-15: horário de entrega e métricas
+        inicio=inicio, fim=fim, coletadas=len(brutas), novas=len(proc.adicionadas),
+        recomendadas=len(resumo.itens), erros=len(erros), arquivo_resumo=str(arquivo),
+    ))
     return ResultadoRodada(
         coletadas=len(brutas), processamento=proc, resumo=resumo, arquivo_resumo=arquivo,
-        erros=erros, pedido_ia=pedido, falhas_adaptadores=falhas,
+        erros=erros, pedido_ia=pedido.id if pedido else None,
+        pedido_ia_autorizado=bool(pedido and pedido.autorizacao == "aprovado"), falhas_adaptadores=falhas,
     )

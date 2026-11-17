@@ -19,6 +19,12 @@ class IdiomaRascunho(BaseModel):
     nivel: str | None = None
 
 
+class ProjetoRascunho(BaseModel):
+    nome: str
+    tecnologias: list[str] = Field(default_factory=list)
+    descricao: str | None = None
+
+
 class ResultadoImportacao(BaseModel):
     """Tudo o que foi extraído de uma fonte, para exibição e confirmação."""
 
@@ -28,6 +34,9 @@ class ResultadoImportacao(BaseModel):
     telefone: str | None = None
     github: str | None = None
     linkedin: str | None = None
+    cidade: str | None = None
+    uf: str | None = None
+    objetivo: str | None = None
     outros_links: list[str] = Field(default_factory=list)
     resumo: str | None = None
     competencias: list[str] = Field(default_factory=list)
@@ -35,6 +44,7 @@ class ResultadoImportacao(BaseModel):
     experiencias: list[ExperienciaRascunho] = Field(default_factory=list)
     formacoes: list[FormacaoRascunho] = Field(default_factory=list)
     certificacoes: list[CertificacaoRascunho] = Field(default_factory=list)
+    projetos: list[ProjetoRascunho] = Field(default_factory=list)
     texto_bruto: str | None = None
 
     def vazio(self) -> bool:
@@ -52,6 +62,8 @@ class ResultadoImportacao(BaseModel):
                 self.experiencias,
                 self.formacoes,
                 self.certificacoes,
+                self.projetos,
+                self.objetivo,
                 self.texto_bruto,
             ]
         )

@@ -73,6 +73,7 @@ Agente de IA para gestão de carreira: otimização de currículo, perfil no Lin
 | RF-IA-05 | Registro de cada uso: data, motor, tarefa, dados enviados, removidos, autorização e resultado | ✅ Implementado |
 | RF-IA-06 | Cada texto gerado identifica quem o escreveu: Claude Pro, Gemini Pro, motor local ou você | ✅ Implementado |
 | RF-IA-07 | Recusa por limite de uso: avisa e oferece o outro motor ou o local, com nova autorização | ✅ Implementado |
+| RF-IA-08 | Autorização em lote (ex.: toda a rodada de hoje): desligada por padrão, com prazo de até 24 h e revogável | ✅ Implementado |
 | RF-VG-01 | Buscas salvas: cargos e sinônimos, nível, modelo, localidades, contrato, salário mínimo, idioma, empresas-alvo e bloqueadas | ✅ Implementado |
 | RF-VG-02 | Coleta só de fontes permitidas: alertas por e-mail (.eml ou IMAP somente leitura), páginas de carreira e links seus | ✅ Implementado |
 | RF-VG-03 | Rodada sob demanda e agendada (padrão 7h, Agendador do Windows ou cron) | ✅ Implementado |
@@ -93,6 +94,10 @@ Agente de IA para gestão de carreira: otimização de currículo, perfil no Lin
 | RF-OP-05 | Fila única de aprovações (usos de IA, publicações, alterações do LinkedIn) com aprovar, editar ou rejeitar | ✅ Implementado |
 | RF-OP-06 | Log de auditoria das ações externas: plataforma, ação, data e hora, antes e depois, aprovação e captura | ✅ Implementado |
 | RF-OP-07 | Saúde dos adaptadores: parar e avisar ao detectar erro ou mudança de layout | ✅ Implementado |
+
+## Portão do MVP
+
+O MVP (M1, M2, M4 e M8) está completo. `agente aceite` confere os critérios de aceitação CA-01 a CA-10 sobre os seus dados reais e mostra o que já está comprovado, o que depende de uso (vagas coletadas, cinco dias úteis de resumo antes das 8h) e o que pede conferência manual (enviar o PDF à Gupy, CA-03).
 
 ## Como usar
 
@@ -144,6 +149,8 @@ uv run agente ia motores / motor TAREFA MOTOR   # motor de cada tarefa (claude, 
 uv run agente ia fila / autorizar ID / descartar ID   # pedidos de IA negados, pendentes de decisão
 uv run agente ia log                     # registro de cada uso de IA
 uv run agente ia recusado ID            # o motor recusou por limite: refazer no outro ou seguir local
+uv run agente ia lote / lote criar --tarefa X / lote revogar ID   # autorização em lote (RF-IA-08)
+uv run agente aceite                     # portão do MVP: critérios CA-01 a CA-10 sobre os seus dados
 uv run agente busca criar --nome backend --foco backend-dotnet   # busca salva com cargos e sinônimos
 uv run agente busca empresa "Empresa X" --pagina https://empresax.gupy.io/   # empresa-alvo
 uv run agente vagas rodada               # coleta, triagem, aderência e resumo do dia

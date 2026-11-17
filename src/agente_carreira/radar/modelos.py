@@ -214,12 +214,35 @@ class VagaEncontrada(BaseModel):
         return self.aderencia.nota if self.aderencia else 0
 
 
+class RegistroRodada(BaseModel):
+    """Métricas de uma rodada (RNF-15) e horário de entrega do resumo (CA-08, RNF-11)."""
+
+    inicio: datetime
+    fim: datetime
+    coletadas: int = 0
+    novas: int = 0
+    recomendadas: int = 0
+    erros: int = 0
+    arquivo_resumo: str | None = None
+
+    @property
+    def duracao_segundos(self) -> float:
+        return (self.fim - self.inicio).total_seconds()
+
+
+MAX_RODADAS_LEMBRADAS = 120
+
+
 class BaseVagas(BaseModel):
     itens: list[VagaEncontrada] = Field(default_factory=list)
     emails_processados: list[str] = Field(default_factory=list)
     ultima_rodada: datetime | None = None
     ultimo_resumo_ids: list[str] = Field(default_factory=list)
     ultimo_resumo_data: date | None = None
+    rodadas: list[RegistroRodada] = Field(default_factory=list)
+
+    def registrar_rodada(self, registro: RegistroRodada) -> None:
+        self.rodadas = (self.rodadas + [registro])[-MAX_RODADAS_LEMBRADAS:]
 
     def buscar(self, id_: str) -> VagaEncontrada:
         for vaga in self.itens:

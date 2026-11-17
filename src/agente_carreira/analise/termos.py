@@ -8,9 +8,8 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from collections import Counter
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ..importadores.extrator import TECNOLOGIAS_CONHECIDAS
 from ..vagas import Vaga
@@ -33,6 +32,7 @@ class TermoFrequente(BaseModel):
     vagas_em_que_aparece: int
     total_de_vagas: int
     e_tecnologia: bool
+    origens: list[str] = Field(default_factory=list)  # CA-04: vagas de onde o termo veio
 
     @property
     def percentual(self) -> int:
@@ -52,16 +52,20 @@ def extrair_termos(vagas: list[Vaga], limite: int = 30) -> list[TermoFrequente]:
     if not total:
         return []
 
-    tecnologias = Counter()
+    origens: dict[tuple[str, bool], list[str]] = {}
+
+    def anotar(termo: str, tecnologia: bool, vaga: Vaga) -> None:
+        rotulo = f"{vaga.titulo} ({vaga.empresa})" if vaga.empresa else vaga.titulo
+        origens.setdefault((termo, tecnologia), []).append(rotulo)
+
     for vaga in vagas:
         texto = f"{vaga.titulo}\n{vaga.descricao}"
         for tec in TECNOLOGIAS_CONHECIDAS:
             padrao = re.compile(rf"(?<![\w#+.]){re.escape(tec)}(?![\w#])", re.IGNORECASE)
             if padrao.search(texto):
-                tecnologias[tec] += 1
+                anotar(tec, True, vaga)
 
-    cobertas = {_normalizar(t) for t in tecnologias}
-    genericas = Counter()
+    cobertas = {_normalizar(t) for t, tecnologia in origens if tecnologia}
     for vaga in vagas:
         texto = f"{vaga.titulo}\n{vaga.descricao}"
         palavras = {
@@ -71,15 +75,13 @@ def extrair_termos(vagas: list[Vaga], limite: int = 30) -> list[TermoFrequente]:
         for palavra in palavras:
             if len(palavra) < 3 or palavra in STOPWORDS_PT or palavra in cobertas:
                 continue
-            genericas[palavra] += 1
+            anotar(palavra, False, vaga)
 
     termos = [
-        TermoFrequente(termo=t, vagas_em_que_aparece=n, total_de_vagas=total, e_tecnologia=True)
-        for t, n in tecnologias.items()
-    ] + [
-        TermoFrequente(termo=t, vagas_em_que_aparece=n, total_de_vagas=total, e_tecnologia=False)
-        for t, n in genericas.items()
-        if n >= min(MINIMO_DE_VAGAS, total)
+        TermoFrequente(termo=termo, vagas_em_que_aparece=len(lista), total_de_vagas=total,
+                       e_tecnologia=tecnologia, origens=lista)
+        for (termo, tecnologia), lista in origens.items()
+        if tecnologia or len(lista) >= min(MINIMO_DE_VAGAS, total)
     ]
     termos.sort(key=lambda t: (-t.vagas_em_que_aparece, not t.e_tecnologia, t.termo))
     return termos[:limite]

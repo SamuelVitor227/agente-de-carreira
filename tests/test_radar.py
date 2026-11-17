@@ -571,8 +571,8 @@ def test_novo_pedido_de_justificativa_substitui_o_pendente(dados_em_tmp):
     from agente_carreira.radar.rodada import pedir_justificativa
 
     vaga = _vaga(descricao="Requisitos: C#")
-    primeiro = pedir_justificativa([vaga], _perfil(), "perguntar", HOJE)
-    segundo = pedir_justificativa([vaga], _perfil(), "perguntar", HOJE)
+    primeiro = pedir_justificativa([vaga], _perfil(), "perguntar", HOJE).id
+    segundo = pedir_justificativa([vaga], _perfil(), "perguntar", HOJE).id
     usos = carregar_usos()
     assert [u.id for u in usos.pendentes()] == [segundo]
     assert usos.buscar(primeiro).autorizacao == "descartado"

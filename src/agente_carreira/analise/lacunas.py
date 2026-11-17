@@ -23,6 +23,7 @@ class ItemLacuna(BaseModel):
     vagas_em_que_aparece: int
     percentual: int
     onde_encontrado: str | None = None
+    origens: list[str] = Field(default_factory=list)  # CA-04: vagas de onde o termo veio
 
 
 class RelatorioLacunas(BaseModel):
@@ -78,6 +79,7 @@ def gerar_relatorio(perfil: PerfilMestre, termos: list[TermoFrequente]) -> Relat
             termo=termo.termo,
             vagas_em_que_aparece=termo.vagas_em_que_aparece,
             percentual=termo.percentual,
+            origens=list(termo.origens),
         )
         if _contem_termo(texto_declarado, termo.termo):
             relatorio.ja_no_cv.append(item)

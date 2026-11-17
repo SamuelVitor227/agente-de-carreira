@@ -90,8 +90,14 @@ def estimar_paginas_docx(variante: VarianteCV) -> int:
 
 # ---------------------------------------------------------------- PDF
 
+_TROCAS_PDF = str.maketrans({
+    "–": "-", "—": "-", "‒": "-", "•": "-", "‘": "'", "’": "'", "“": '"', "”": '"', "…": "...", " ": " ",
+})
+
+
 def _latin(texto: str) -> str:
-    return texto.encode("latin-1", "replace").decode("latin-1")
+    """A fonte-base do PDF é latin-1: troca a pontuação tipográfica por equivalentes legíveis por ATS."""
+    return texto.translate(_TROCAS_PDF).encode("latin-1", "replace").decode("latin-1")
 
 
 def exportar_pdf(variante: VarianteCV, destino: Path) -> tuple[Path, int]:

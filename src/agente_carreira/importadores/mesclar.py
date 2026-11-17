@@ -7,7 +7,7 @@ como rascunho até o usuário completá-las com os campos do RF-PM-03.
 
 from __future__ import annotations
 
-from ..models import Certificacao, Idioma, PerfilMestre
+from ..models import Certificacao, Idioma, PerfilMestre, Projeto
 from .resultado import ResultadoImportacao
 
 
@@ -30,6 +30,22 @@ def aplicar_importacao(perfil: PerfilMestre, resultado: ResultadoImportacao) -> 
     if resultado.resumo and not perfil.resumo:
         perfil.resumo = resultado.resumo
         alteracoes.append("resumo preenchido a partir da importação")
+    if resultado.objetivo and not perfil.objetivo:
+        perfil.objetivo = resultado.objetivo
+        alteracoes.append("objetivo preenchido a partir da importação")
+    if resultado.cidade and not perfil.contato.cidade:
+        perfil.contato.cidade = resultado.cidade
+        alteracoes.append(f"contato.cidade = {resultado.cidade}")
+    if resultado.uf and not perfil.contato.uf:
+        perfil.contato.uf = resultado.uf
+        alteracoes.append(f"contato.uf = {resultado.uf}")
+
+    nomes_projetos = {p.nome.lower() for p in perfil.projetos}
+    for proj in resultado.projetos:
+        if proj.nome.lower() not in nomes_projetos:
+            perfil.projetos.append(Projeto(nome=proj.nome, tecnologias=proj.tecnologias, descricao=proj.descricao))
+            nomes_projetos.add(proj.nome.lower())
+            alteracoes.append(f"projetos += {proj.nome}")
 
     for link in resultado.outros_links:
         if link not in perfil.links.outros:

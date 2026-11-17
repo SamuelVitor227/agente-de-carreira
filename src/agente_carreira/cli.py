@@ -107,6 +107,17 @@ def _perguntar_autorizacao(motor: str, descricao: str, dados: list[str], removid
         console.print("Opção inválida.")
 
 
+def _bloquear_sem_lastro(variante, perfil: PerfilMestre) -> None:
+    """RN-02 / RNF-09: nada sem lastro no perfil-mestre sai num CV exportado."""
+    from .analise.lastro import verificar_lastro
+
+    if problemas := verificar_lastro(variante, perfil):
+        console.print("[red]Exportação bloqueada (RN-02): o CV tem itens sem lastro no perfil-mestre:[/red]")
+        for problema in problemas:
+            console.print(f"  • {escape(problema)}")
+        raise typer.Exit(1)
+
+
 def _perfil_ou_none() -> PerfilMestre | None:
     """Perfil para o filtro de dados sensíveis, quando existir (comandos que não dependem dele)."""
     return carregar_perfil() if perfil_existe() else None
@@ -122,6 +133,7 @@ def _usar_ia(perfil, tarefa: str, motor_cli: str | None, dados: list[str], gerar
         TAREFAS,
         carregar_configuracao,
         carregar_usos,
+        lote_que_cobre,
         outro_motor,
         registrar_pedido,
         resolver_motor,
@@ -150,17 +162,33 @@ def _usar_ia(perfil, tarefa: str, motor_cli: str | None, dados: list[str], gerar
             motor = sugerido
 
     sensiveis = valores_sensiveis(perfil)
-    while True:
-        prompt, removidos = sanitizar(gerar_prompt(motor), sensiveis)
-        escolha = _perguntar_autorizacao(motor, TAREFAS[tarefa], dados, removidos, len(prompt))
-        if escolha != "t":
-            break
-        motor = outro_motor(motor)
-
     usos = carregar_usos()
+    lote = lote_que_cobre(usos, tarefa, motor)
+    if lote is not None:
+        # RF-IA-08: autorizado em lote — o aviso de motor, tarefa e dados continua sendo mostrado (RF-IA-02).
+        prompt, removidos = sanitizar(gerar_prompt(motor), sensiveis)
+        corpo = (
+            f"[bold]Motor:[/bold] {escape(motor)} · [bold]Tarefa:[/bold] {escape(TAREFAS[tarefa])}\n"
+            "[bold]Dados que vão no prompt:[/bold]\n" + "\n".join(f"  • {escape(d)}" for d in dados)
+            + (f"\n[bold]Removidos automaticamente:[/bold] {escape(', '.join(f'{t} ({q})' for t, q in removidos.items()))}"
+               if removidos else "")
+        )
+        console.print(Panel(corpo, title=f"Autorizado em lote {lote.id} até {lote.valida_ate.astimezone():%d/%m %H:%M} (RF-IA-08)",
+                            border_style="magenta"))
+        escolha = "s"
+    else:
+        while True:
+            prompt, removidos = sanitizar(gerar_prompt(motor), sensiveis)
+            escolha = _perguntar_autorizacao(motor, TAREFAS[tarefa], dados, removidos, len(prompt))
+            if escolha != "t":
+                break
+            motor = outro_motor(motor)
+        usos = carregar_usos()
+
     uso = registrar_pedido(
         usos, tarefa=tarefa, descricao=TAREFAS[tarefa], motor=motor, dados=dados, prompt=prompt,
         removidos=removidos, nome_arquivo=nome_arquivo(motor), autorizado=escolha == "s",
+        lote=lote.id if lote is not None else None,
     )
     salvar_usos(usos)
     if escolha == "n":
@@ -381,8 +409,8 @@ def importar(
     arquivo: Path = typer.Argument(..., exists=True, readable=True, help="CV em .pdf/.docx, exportação do LinkedIn (.zip) ou texto (.txt/.md)."),
     confirmar: bool = typer.Option(False, "--sim", help="Aplica sem perguntar (use com cautela)."),
 ) -> None:
-    """Importa dados de CV mostrando tudo o que foi extraído (RF-PM-02)."""
-    perfil = carregar_perfil()
+    """Importa dados de CV mostrando tudo o que foi extraído; sem perfil, cria o perfil-mestre (RF-PM-02, CA-01)."""
+    perfil = carregar_perfil() if perfil_existe() else None
     resultado = importar_arquivo(arquivo)
 
     if resultado.vazio():
@@ -395,9 +423,11 @@ def importar(
     for campo, valor in [
         ("Nome", resultado.nome), ("E-mail", resultado.email), ("Telefone", resultado.telefone),
         ("GitHub", resultado.github), ("LinkedIn", resultado.linkedin),
+        ("Cidade", ", ".join(p for p in [resultado.cidade, resultado.uf] if p) or None),
+        ("Objetivo", resultado.objetivo),
     ]:
         if valor:
-            tabela.add_row(campo, valor)
+            tabela.add_row(campo, Text(valor))
     if resultado.outros_links:
         tabela.add_row("Outros links", "\n".join(resultado.outros_links))
     if resultado.resumo:
@@ -410,8 +440,10 @@ def importar(
         tabela.add_row("Experiência (rascunho)", f"{exp.cargo or '?'} — {exp.empresa or '?'} ({exp.periodo_texto or 'período ?'})")
     for form in resultado.formacoes:
         tabela.add_row("Formação (rascunho)", f"{form.curso or '?'} — {form.instituicao or '?'}")
+    for proj in resultado.projetos:
+        tabela.add_row("Projeto", Text(f"{proj.nome} ({', '.join(proj.tecnologias) or 'sem tecnologias'})"))
     for cert in resultado.certificacoes:
-        tabela.add_row("Certificação", f"{cert.nome} ({cert.emissor or '?'})")
+        tabela.add_row("Certificação", Text(f"{cert.nome} ({cert.emissor or '?'})"))
     console.print(tabela)
 
     if resultado.texto_bruto and not resultado.experiencias:
@@ -421,6 +453,11 @@ def importar(
         console.print("Nada foi alterado.")
         raise typer.Exit(0)
 
+    if perfil is None:
+        nome = resultado.nome or typer.prompt("Nome completo (não encontrado no arquivo)")
+        email = resultado.email or typer.prompt("E-mail (não encontrado no arquivo)")
+        perfil = PerfilMestre(contato=Contato(nome=nome, email=email))
+        console.print("[green]Perfil-mestre criado a partir do arquivo.[/green]")
     alteracoes = aplicar_importacao(perfil, resultado)
     if not alteracoes:
         console.print("[yellow]Nenhuma alteração: os campos já estavam preenchidos.[/yellow]")
@@ -692,7 +729,9 @@ def cv_lacunas(
             console.print("  (nenhum)")
         for item in itens:
             extra = f" — encontrado em: {item.onde_encontrado}" if item.onde_encontrado else ""
-            console.print(f"  • {item.termo} ({item.vagas_em_que_aparece} vaga(s), {item.percentual}%){extra}")
+            console.print(f"  • {escape(item.termo)} ({item.vagas_em_que_aparece} vaga(s), {item.percentual}%){escape(extra)}")
+            mais = f" e mais {len(item.origens) - 3}" if len(item.origens) > 3 else ""
+            console.print(f"    [dim]de: {escape('; '.join(item.origens[:3]))}{mais}[/dim]")
 
     console.print(f"[bold]Relatório de lacunas[/bold] — conjunto de {relatorio.total_de_vagas} vaga(s)")
     _secao("1. Você tem e já está no CV", "green", relatorio.ja_no_cv, "nada a fazer")
@@ -865,6 +904,7 @@ def cv_exportar(
             console.print(f"  • {p}")
         console.print("Revise com 'agente confirmar' e exporte de novo.")
         raise typer.Exit(1)
+    _bloquear_sem_lastro(variante, perfil)
 
     alvo = paginas if paginas is not None else paginas_alvo_padrao(nivel)
     pasta = diretorio_dados() / "saidas"
@@ -1031,6 +1071,7 @@ def cv_sob_medida(
                 console.print(f"  • {p}")
             console.print("Confirme com 'agente confirmar' e exporte de novo.")
             raise typer.Exit(1)
+        _bloquear_sem_lastro(resultado.variante, perfil)
         from .analise.exportar import exportar_docx, exportar_pdf
 
         pasta = diretorio_dados() / "saidas"
@@ -2177,6 +2218,114 @@ def ia_descartar(id_: str = typer.Argument(..., metavar="ID")) -> None:
 def ia_recusado(id_: str = typer.Argument(..., metavar="ID", help="ID do uso de IA (veja 'agente ia log').")) -> None:
     """Registra que o motor recusou por limite de uso e oferece o outro motor ou o local (RF-IA-07)."""
     _tratar_recusa(id_)
+
+
+@app.command("aceite")
+def aceite() -> None:
+    """Confere o portão do MVP: critérios de aceitação CA-01 a CA-10 sobre os seus dados."""
+    from .aceite import verificar_mvp
+
+    criterios = verificar_mvp()
+    tabela = Table(title="Portão do MVP — critérios de aceitação (seção 14)")
+    for col in ("CA", "Critério", "Status", "Detalhe"):
+        tabela.add_column(col, overflow="fold")
+    cores = {"ok": "green", "pendente": "yellow", "falhou": "red", "manual": "cyan"}
+    for c in criterios:
+        tabela.add_row(c.codigo, Text(c.titulo), f"[{cores[c.status]}]{c.status}[/{cores[c.status]}]", Text(c.detalhe))
+    console.print(tabela)
+    ok = sum(1 for c in criterios if c.status == "ok")
+    console.print(f"[bold]{ok} de {len(criterios)} ok[/bold] · pendente = falta uso real para comprovar · "
+                  "manual = a parte automática passou, falta a conferência indicada.")
+    if any(c.status == "falhou" for c in criterios):
+        raise typer.Exit(1)
+
+
+lote_app = typer.Typer(help="Autorização em lote: desligada por padrão, com prazo e revogável (RF-IA-08).",
+                       invoke_without_command=True)
+ia_app.add_typer(lote_app, name="lote")
+
+
+@lote_app.callback()
+def lote_listar(ctx: typer.Context) -> None:
+    """Lista as autorizações em lote."""
+    if ctx.invoked_subcommand is not None:
+        return
+    from .ia import carregar_usos
+
+    lotes = carregar_usos().lotes
+    if not lotes:
+        console.print("Nenhuma autorização em lote — cada uso de IA pede autorização (padrão). "
+                      "Crie uma com 'agente ia lote criar --tarefa justificativa-vagas'.")
+        return
+    tabela = Table(title="Autorizações em lote")
+    for col in ("ID", "Situação", "Tarefas", "Motor", "Válida até", "Usos"):
+        tabela.add_column(col, overflow="fold")
+    for l in reversed(lotes):
+        situacao = "revogada" if l.revogada_em else ("ativa" if l.ativa() else "vencida")
+        cor = {"ativa": "green", "revogada": "red", "vencida": "dim"}[situacao]
+        tabela.add_row(l.id, f"[{cor}]{situacao}[/{cor}]", ", ".join(l.tarefas), l.motor or "claude ou gemini",
+                       f"{l.valida_ate.astimezone():%d/%m %H:%M}", str(len(l.usos)))
+    console.print(tabela)
+
+
+@lote_app.command("criar")
+def lote_criar(
+    tarefa: list[str] = typer.Option(..., "--tarefa", help="Tarefa coberta (repita para mais de uma)."),
+    motor: str | None = typer.Option(None, "--motor", help="claude ou gemini; sem isso, vale para os dois."),
+    ate: str | None = typer.Option(None, "--ate", help="Hora de hoje em que o lote vence (HH:MM)."),
+    horas: float | None = typer.Option(None, "--horas", help="Duração em horas (máximo 24)."),
+) -> None:
+    """Cria uma autorização em lote — por exemplo, 'toda a rodada de hoje' (RF-IA-08)."""
+    import re as _re
+    from datetime import datetime, timedelta, timezone
+
+    from .ia import TAREFAS, carregar_usos, criar_lote, fim_do_dia, salvar_usos
+
+    agora = datetime.now(timezone.utc)
+    if horas is not None:
+        valida_ate = agora + timedelta(hours=horas)
+    elif ate:
+        m = _re.fullmatch(r"([01]?\d|2[0-3]):([0-5]\d)", ate.strip())
+        if not m:
+            console.print("[red]Use --ate HH:MM.[/red]")
+            raise typer.Exit(1)
+        valida_ate = agora.astimezone().replace(hour=int(m.group(1)), minute=int(m.group(2)), second=0,
+                                                 microsecond=0).astimezone(timezone.utc)
+    else:
+        valida_ate = fim_do_dia(agora)
+    descricoes = "\n".join(f"  • {escape(t)}: {escape(TAREFAS.get(t, 'tarefa desconhecida'))}" for t in tarefa)
+    console.print(Panel(
+        f"Enquanto o lote valer, estes usos de IA geram o prompt sem perguntar a cada vez:\n{descricoes}\n"
+        f"Motor: {motor or 'Claude ou Gemini'} · válido até {valida_ate.astimezone():%d/%m %H:%M}\n"
+        "Cada uso continua mostrando motor, tarefa e dados, e fica no registro com o ID do lote. "
+        "Revogue quando quiser com 'agente ia lote revogar ID'.",
+        title="Autorização em lote (RF-IA-08)", border_style="magenta",
+    ))
+    if not typer.confirm("Criar esta autorização em lote?", default=False):
+        raise typer.Exit(0)
+    usos = carregar_usos()
+    try:
+        lote = criar_lote(usos, tarefa, valida_ate, motor=motor, agora=agora)
+    except ValueError as erro:
+        console.print(f"[red]{escape(str(erro))}[/red]")
+        raise typer.Exit(1)
+    salvar_usos(usos)
+    console.print(f"[green]Autorização em lote {lote.id} criada.[/green]")
+
+
+@lote_app.command("revogar")
+def lote_revogar(id_: str = typer.Argument(..., metavar="ID")) -> None:
+    """Revoga uma autorização em lote na hora: os próximos usos voltam a pedir autorização."""
+    from .ia import carregar_usos, revogar_lote, salvar_usos
+
+    usos = carregar_usos()
+    try:
+        revogar_lote(usos, id_)
+    except ValueError as erro:
+        console.print(f"[red]{escape(str(erro))}[/red]")
+        raise typer.Exit(1)
+    salvar_usos(usos)
+    console.print(f"[green]Lote {id_} revogado.[/green] Cada uso de IA volta a pedir autorização.")
 
 
 @ia_app.command("log")
