@@ -43,6 +43,8 @@ Agente de IA para gestão de carreira: otimização de currículo, perfil no Lin
 | RF-CV-04 | Reordenação de seções e itens pelo peso no nível-alvo (formação/projetos/certificações antes de fora da área) | ✅ Implementado |
 | RF-CV-05 | Nota de compatibilidade ATS (estrutura, títulos padrão, termos cobertos, legibilidade) com histórico do que mudou | ✅ Implementado |
 | RF-CV-06 | Sugestões reais para fechar lacunas (curso/certificação/projeto), priorizando catálogos que você já tem (DIO) | ✅ Implementado |
+| RF-CV-07 | Variantes por foco (backend .NET, cloud AWS, mobile, dados, suporte) e idioma (pt/en), derivadas da versão-base | ✅ Implementado |
+| RF-CV-08 | Exportação PDF e DOCX compatível com ATS (uma coluna, sem tabelas/imagens, fonte padrão, formato único de data, tamanho-alvo) | ✅ Implementado |
 
 ## Como usar
 
@@ -72,6 +74,8 @@ uv run agente cv reescrever           # gera prompt de reescrita p/ Claude/Gemin
 uv run agente cv ordenar --nivel estagio   # ordem de seções pelo peso no nível-alvo
 uv run agente cv nota                 # nota ATS 0-100 com o que mudou desde a última revisão
 uv run agente cv fechar-lacunas       # curso/certificação/projeto para cada lacuna sem lastro
+uv run agente cv variante --foco backend-dotnet --idioma pt   # variante derivada da versão-base
+uv run agente cv exportar --foco backend-dotnet --formato ambos  # PDF+DOCX compatíveis com ATS
 ```
 
 Os dados ficam em `data/perfil-mestre.json` (fora do git), configurável pela variável `AGENTE_CARREIRA_DATA`.

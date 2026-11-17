@@ -621,6 +621,93 @@ def cv_fechar_lacunas(
         console.print(f"  • {rotulo}{origem}: {s.descricao}")
 
 
+@cv_app.command("variante")
+def cv_variante(
+    foco: str = typer.Option(..., "--foco", help="Foco: backend-dotnet, cloud-aws, mobile, dados ou suporte."),
+    idioma: str = typer.Option("pt", "--idioma", help="pt ou en."),
+    nivel: str = typer.Option("estagio", "--nivel"),
+) -> None:
+    """Gera uma variante do CV por foco e idioma, derivada da versão-base (RF-CV-07)."""
+    from .analise.variantes import gerar_variante
+
+    perfil = carregar_perfil()
+    try:
+        variante = gerar_variante(perfil, foco=foco, idioma=idioma, nivel=nivel)
+    except ValueError as erro:
+        console.print(f"[red]{erro}[/red]")
+        raise typer.Exit(1)
+
+    destino = diretorio_dados() / "variantes" / f"{variante.nome_arquivo}.json"
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    destino.write_text(variante.model_dump_json(indent=2), encoding="utf-8")
+
+    console.print(f"[bold]{variante.nome}[/bold]")
+    for linha in variante.cabecalho:
+        console.print(f"[dim]{linha}[/dim]")
+    for secao in variante.secoes:
+        console.print(f"\n[bold cyan]{secao.titulo.upper()}[/bold cyan]")
+        if secao.paragrafo:
+            console.print(f"  {secao.paragrafo}")
+        for item in secao.itens:
+            detalhes = " — ".join(p for p in [item.subtitulo, item.periodo] if p)
+            estrela = " [yellow]*[/yellow]" if item.relevancia else ""
+            console.print(f"  [bold]{item.titulo}[/bold]" + (f" | {detalhes}" if detalhes else "") + estrela)
+            for marcador in item.marcadores:
+                console.print(f"    • {marcador}")
+    console.print(f"\n[green]Variante salva em[/green] {destino}  [dim](* = item relevante ao foco)[/dim]")
+    if idioma == "en":
+        console.print("[yellow]Títulos e rótulos em inglês; os textos permanecem como registrados — traduza o conteúdo via 'agente cv reescrever' (RN-02).[/yellow]")
+
+
+@cv_app.command("exportar")
+def cv_exportar(
+    foco: str = typer.Option(..., "--foco", help="Foco: backend-dotnet, cloud-aws, mobile, dados ou suporte."),
+    idioma: str = typer.Option("pt", "--idioma", help="pt ou en."),
+    nivel: str = typer.Option("estagio", "--nivel"),
+    formato: str = typer.Option("ambos", "--formato", help="pdf, docx ou ambos."),
+    paginas: int | None = typer.Option(None, "--paginas", help="Tamanho-alvo em páginas (padrão: 1 para estágio/júnior, 2 nos demais)."),
+) -> None:
+    """Exporta a variante em PDF/DOCX com layout compatível com ATS (RF-CV-08)."""
+    from .analise.exportar import (
+        aviso_de_tamanho,
+        estimar_paginas_docx,
+        exportar_docx,
+        exportar_pdf,
+        paginas_alvo_padrao,
+    )
+    from .analise.variantes import gerar_variante
+
+    if formato not in {"pdf", "docx", "ambos"}:
+        console.print(f"[red]Formato inválido: {formato}. Use pdf, docx ou ambos.[/red]")
+        raise typer.Exit(1)
+    perfil = carregar_perfil()
+    try:
+        variante = gerar_variante(perfil, foco=foco, idioma=idioma, nivel=nivel)
+    except ValueError as erro:
+        console.print(f"[red]{erro}[/red]")
+        raise typer.Exit(1)
+
+    alvo = paginas if paginas is not None else paginas_alvo_padrao(nivel)
+    pasta = diretorio_dados() / "saidas"
+    avisos: list[str] = []
+
+    if formato in {"pdf", "ambos"}:
+        caminho_pdf, n_paginas = exportar_pdf(variante, pasta / f"{variante.nome_arquivo}.pdf")
+        console.print(f"[green]PDF gerado em[/green] {caminho_pdf} ({n_paginas} página(s))")
+        if aviso := aviso_de_tamanho(n_paginas, alvo, "PDF"):
+            avisos.append(aviso)
+    if formato in {"docx", "ambos"}:
+        caminho_docx = exportar_docx(variante, pasta / f"{variante.nome_arquivo}.docx")
+        estimadas = estimar_paginas_docx(variante)
+        console.print(f"[green]DOCX gerado em[/green] {caminho_docx} (~{estimadas} página(s) estimada(s))")
+        if aviso := aviso_de_tamanho(estimadas, alvo, "DOCX"):
+            avisos.append(aviso)
+
+    for aviso in avisos:
+        console.print(f"[yellow]{aviso}[/yellow]")
+    console.print("[dim]Layout ATS: uma coluna, sem tabelas/imagens, fonte padrão, títulos convencionais, formato único de data.[/dim]")
+
+
 @cv_app.command("reescrever")
 def cv_reescrever(
     foco: str | None = typer.Option(None, "--foco"),
