@@ -21,7 +21,7 @@ ARQUIVO_VAGAS_ANTIGO = "vagas-config.json"
 
 MODOS_PLATAFORMA = ("copiloto", "assistido", "leitura", "desligado")
 OPCOES_MOTOR = ("claude", "gemini", "local", "perguntar")
-EVENTOS = ("resumo_diario", "vaga_acima_limiar", "pedido_aprovacao", "falha_adaptador")
+EVENTOS = ("resumo_diario", "vaga_acima_limiar", "pedido_aprovacao", "falha_adaptador", "lembrete_funil")
 
 # Modo padrão por plataforma (Anexo B da especificação).
 MODOS_PADRAO = {
@@ -55,6 +55,7 @@ class Limites(BaseModel):
     acoes_por_sessao: int = 20              # RN-05
     intervalo_entre_acoes_segundos: int = 30
     reaplicar_mesma_empresa_dias: int = 90  # RF-CA-04
+    followup_dias: int = 7                  # RF-AC-03
 
 
 class Horarios(BaseModel):

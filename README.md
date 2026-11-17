@@ -98,6 +98,20 @@ Agente de IA para gestão de carreira: otimização de currículo, perfil no Lin
 | RF-PL-09 | Status por plataforma (não iniciado, em andamento, completo, desatualizado) e última revisão | ✅ Implementado |
 | RF-PL-10 | Aviso antes de etapas pagas; nada é contratado | ✅ Implementado |
 | RF-PL-11 | Testes técnicos são do usuário; o agente prepara material de estudo | ✅ Implementado |
+| RF-CA-01 | Kit de candidatura por vaga: CV sob medida, mensagem curta e respostas de triagem | ✅ Implementado |
+| RF-CA-02 | Respostas-padrão (Anexo C) aprovadas e reutilizadas; sem resposta aprovada, a pergunta fica para você (RN-09) | ✅ Implementado |
+| RF-CA-03 | Preenchimento no modo da plataforma (copiloto ou assistido com Playwright), parando na tela de revisão; o envio é seu | ✅ Implementado |
+| RF-CA-04 | Sem candidatura repetida; mesma empresa e cargo em menos de 90 dias pede confirmação | ✅ Implementado |
+| RF-CA-05 | Limite diário de candidaturas e aderência mínima configuráveis; vaga suspeita de golpe não recebe dados | ✅ Implementado |
+| RF-CA-06 | Registro de cada envio: CV e kit guardados, descrição da vaga preservada, auditoria e captura | ✅ Implementado |
+| RF-CA-07 | Perguntas eliminatórias primeiro, com alerta quando a resposta verdadeira pode eliminar | ✅ Implementado |
+| RF-CA-08 | Indicação: conexões na empresa (exportação do LinkedIn) e rascunho de pedido, envio manual | ✅ Implementado |
+| RF-AC-01 | Funil por etapas (encontrada → aplicada → em análise → testes e entrevistas → proposta → contratado/saída), só para frente | ✅ Implementado |
+| RF-AC-02 | Retornos por e-mail atualizam o funil; e-mail ambíguo pede confirmação; o texto é só dado (RNF-04) | ✅ Implementado |
+| RF-AC-03 | Lembretes de follow-up e de etapas agendadas, com rascunho de follow-up e agenda .ics | ✅ Implementado |
+| RF-AC-04 | Preparação para entrevista: empresa, requisitos × evidências, perguntas prováveis e para fazer | ✅ Implementado |
+| RF-AC-05 | Contatos de recrutadores com dados mínimos e exclusão em um passo (RNF-05) | ✅ Implementado |
+| RF-AC-06 | Motivo de saída obrigatório em reprovação e desistência | ✅ Implementado |
 | RF-OP-01 | Preferências num só lugar: buscas, limites diários, limiares, horários, notificações, modo por plataforma e motor por tarefa | ✅ Implementado |
 | RF-OP-02 | Modo global "somente sugestão": nenhuma plataforma é tocada | ✅ Implementado |
 | RF-OP-03 | Pausar, retomar e cancelar tarefas; retomar a partir do último passo confirmado | ✅ Implementado |
@@ -167,6 +181,15 @@ uv run agente plataformas cadastrar ID   # cadastro guiado (copiloto ou assistid
 uv run agente plataformas conferir ID [--antes-de-salvar]   # confere o gravado e mede a completude
 uv run agente plataformas propagar       # plataformas desatualizadas ganham tarefa de atualização
 uv run agente plataformas estudo ID      # material de estudo para testes técnicos
+uv run agente respostas / respostas definir CHAVE "texto"   # respostas-padrão de triagem (Anexo C)
+uv run agente candidatar ID_DA_VAGA --perguntas perguntas.txt   # kit, preenchimento e registro do envio
+uv run agente indicacao ID_DA_VAGA --conexoes Connections.csv  # quem você conhece na empresa
+uv run agente funil / funil mover ID ETAPA [--quando "AAAA-MM-DD HH:MM"]   # funil de candidaturas
+uv run agente funil enviada ID           # registra um envio feito por fora do 'candidatar'
+uv run agente funil lembretes / feito ID / followup ID / agenda   # follow-ups, etapas e .ics
+uv run agente funil emails / confirmar   # retornos por e-mail (.eml em data/caixa-retornos ou IMAP)
+uv run agente funil preparar ID          # material de preparação para a entrevista
+uv run agente contatos / contatos adicionar --nome X / interacao ID "resumo" / excluir ID
 uv run agente busca criar --nome backend --foco backend-dotnet   # busca salva com cargos e sinônimos
 uv run agente busca empresa "Empresa X" --pagina https://empresax.gupy.io/   # empresa-alvo
 uv run agente vagas rodada               # coleta, triagem, aderência e resumo do dia
@@ -186,6 +209,10 @@ uv run agente notificacoes teste         # testa o canal de notificação
 ### Modo assistido (Playwright)
 
 Plataformas no modo assistido (como a Gupy) abrem um navegador visível com perfil próprio em `data/navegador`. Você faz login, 2FA e CAPTCHA; o agente confere se os campos esperados estão na página, preenche com intervalo entre as ações e limite por sessão, tira uma captura para a auditoria e **para antes de salvar** — quem clica é você. Se a página não tiver os campos esperados, ele não preenche nada e volta para o copiloto. Depois de `uv sync`, instale o navegador uma vez: `uv run playwright install chromium`.
+
+### Candidatura
+
+`agente candidatar` confere antes de tudo se a vaga já foi aplicada, se é a mesma empresa e cargo de uma candidatura recente, o limite do dia, a aderência mínima, sinais de golpe e a matrícula para estágio. Depois monta o kit: CV sob medida, mensagem curta só com fatos do perfil e as respostas de triagem (do banco aprovado ou do perfil; o que não tiver resposta fica para você). As eliminatórias aparecem primeiro. Você aprova ou edita o kit, o agente preenche no modo da plataforma e para na revisão. Quando você confirma que enviou, a candidatura vai para "aplicada", entra na auditoria e ganha um lembrete de follow-up (`limites.followup_dias`, padrão 7). No arquivo de perguntas vai uma por linha; comece com `*` as eliminatórias.
 
 ### Notificações
 

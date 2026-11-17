@@ -66,6 +66,7 @@ def extrair_termos(vagas: list[Vaga], limite: int = 30) -> list[TermoFrequente]:
                 anotar(tec, True, vaga)
 
     cobertas = {_normalizar(t) for t, tecnologia in origens if tecnologia}
+    cobertas |= {c.lstrip(".") for c in cobertas}  # ".NET" não vira também o termo solto "net"
     for vaga in vagas:
         texto = f"{vaga.titulo}\n{vaga.descricao}"
         palavras = {

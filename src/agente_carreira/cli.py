@@ -1175,9 +1175,9 @@ def candidatura_listar() -> None:
 @candidatura_app.command("status")
 def candidatura_status(
     numero: int = typer.Argument(..., help="Número em 'agente candidatura listar'."),
-    novo: str = typer.Argument(..., help="preparada, enviada, retorno, entrevista, proposta, recusada, sem_resposta"),
+    novo: str = typer.Argument(..., help="Etapa do funil (veja 'agente funil'); o funil completo está em 'agente funil mover'."),
 ) -> None:
-    """Atualiza o status de uma candidatura (alimenta o desempenho, RF-CV-10)."""
+    """Atualiza a etapa de uma candidatura (alimenta o desempenho, RF-CV-10). Para datas e motivos, use 'agente funil mover'."""
     from .candidaturas import StatusCandidatura, carregar_candidaturas, salvar_candidaturas
 
     colecao = carregar_candidaturas()
@@ -1186,13 +1186,13 @@ def candidatura_status(
         raise typer.Exit(1)
     try:
         status = StatusCandidatura(novo)
-    except ValueError:
-        console.print(f"[red]Status inválido: {novo}.[/red]")
+        cand = colecao.itens[numero - 1]
+        cand.mudar_status(status)
+    except ValueError as erro:
+        console.print(f"[red]{escape(str(erro)) if 'funil' in str(erro) or 'encerrada' in str(erro) else f'Etapa inválida: {escape(novo)}.'}[/red]")
         raise typer.Exit(1)
-    cand = colecao.itens[numero - 1]
-    cand.mudar_status(status)
     salvar_candidaturas(colecao)
-    console.print(f"[green]{cand.vaga_titulo}: status → {status.value}[/green]")
+    console.print(f"[green]{cand.vaga_titulo}: etapa → {status.value}[/green]")
 
 
 # ---------------------------------------------------------------- LinkedIn (M2, copiloto)
@@ -2108,6 +2108,7 @@ from .cli_operacao import (  # noqa: E402 - registrado junto dos demais grupos
 )
 from .cli_vagas import busca_app, vagas_app  # noqa: E402
 from .cli_plataformas import plataformas_app  # noqa: E402
+from .cli_candidatura import candidatar, contatos_app, funil_app, indicacao, respostas_app  # noqa: E402
 
 app.add_typer(busca_app, name="busca")
 app.add_typer(vagas_app, name="vagas")
@@ -2118,6 +2119,11 @@ app.add_typer(auditoria_app, name="auditoria")
 app.add_typer(saude_app, name="saude")
 app.add_typer(notificacoes_app, name="notificacoes")
 app.add_typer(plataformas_app, name="plataformas")
+app.add_typer(respostas_app, name="respostas")
+app.add_typer(funil_app, name="funil")
+app.add_typer(contatos_app, name="contatos")
+app.command("candidatar")(candidatar)
+app.command("indicacao")(indicacao)
 
 
 @ia_app.command("motores")

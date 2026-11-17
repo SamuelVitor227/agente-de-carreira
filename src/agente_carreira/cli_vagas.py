@@ -304,6 +304,14 @@ def _notificar_rodada(resultado, central, config) -> None:
             "\n".join(f"- {f}" for f in resultado.falhas_adaptadores) + "\n\nConfira com 'agente saude' e reative quando estiver ok.",
             central,
         ))
+    from .funil import carregar_lembretes, vencidos
+
+    if lembretes := vencidos(carregar_lembretes()):
+        envios.append(notificar(
+            "lembrete_funil", f"{len(lembretes)} lembrete(s) do funil",
+            "\n".join(f"- {l.descricao} ({l.quando.astimezone():%d/%m %H:%M})" for l in lembretes)
+            + "\n\nVeja 'agente funil lembretes'.", central,
+        ))
     feitos = [e for e in envios if e]
     if not feitos:
         return
