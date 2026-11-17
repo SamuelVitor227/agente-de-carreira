@@ -202,31 +202,60 @@ def vagas_rodada(
     sem_paginas: bool = typer.Option(False, "--sem-paginas", help="Não lê as páginas de carreira das empresas-alvo."),
     sem_enriquecer: bool = typer.Option(False, "--sem-enriquecer", help="Não abre a página das vagas de domínios permitidos."),
     verificar_links: bool = typer.Option(False, "--verificar-links", help="Confere se vagas já vistas saíram do ar (domínios permitidos)."),
+    forcar: bool = typer.Option(False, "--forcar", help="Roda mesmo com a rodada pausada."),
 ) -> None:
     """Rodada de vagas: coleta, deduplica, filtra, pontua e gera o resumo do dia (RF-VG-03, RF-VG-09)."""
-    from .ia import carregar_configuracao
+    from .configuracao import carregar_configuracao, plataforma_permite_leitura
+    from .operacao.notificacoes import notificar
+    from .operacao.saude import carregar_saude, salvar_saude
+    from .operacao.tarefas import carregar_tarefas, falhar, garantir_tarefa_rodada, salvar_tarefas
     from .radar.coleta import config_imap
     from .radar.rodada import executar_rodada
 
+    tarefas = carregar_tarefas()
+    tarefa = garantir_tarefa_rodada(tarefas)
+    salvar_tarefas(tarefas)
+    if tarefa.bloqueada and not forcar:
+        console.print(f"[yellow]A rodada de vagas está {tarefa.status}.[/yellow] Retome com "
+                      f"'agente tarefas retomar {tarefa.id}' ou rode uma vez com --forcar (RF-OP-03).")
+        raise typer.Exit(0)
+
     perfil = _perfil()
-    config = carregar_config()
+    central = carregar_configuracao()
+    config = central.vagas
     if not config.buscas:
         console.print("[red]Nenhuma busca salva. Crie uma com 'agente busca criar --nome X --foco backend-dotnet'.[/red]")
         raise typer.Exit(1)
+    if central.somente_sugestao:
+        console.print("[yellow]Modo somente sugestão: nenhuma página de plataforma é lida; só os alertas de e-mail (RF-OP-02).[/yellow]")
     pasta = emails or diretorio_dados() / "caixa-alertas"
     pasta.mkdir(parents=True, exist_ok=True)
     imap = None if sem_imap else config_imap()
     if not sem_imap and imap is None:
         console.print(f"[dim]IMAP não configurado (variáveis AGENTE_IMAP_*); lendo os .eml de {pasta}.[/dim]")
 
+    saude = carregar_saude()
     base = carregar_base()
-    resultado = executar_rodada(
-        perfil, config, base, date.today(), pasta_emails=pasta, imap=imap,
-        usar_paginas=not sem_paginas, enriquecer_links=not sem_enriquecer, verificar_links=verificar_links,
-        motor_justificativa=carregar_configuracao().motor_da_tarefa("justificativa-vagas"),
-    )
+    try:
+        resultado = executar_rodada(
+            perfil, config, base, date.today(), pasta_emails=pasta, imap=imap,
+            usar_paginas=not sem_paginas, enriquecer_links=not sem_enriquecer, verificar_links=verificar_links,
+            motor_justificativa=central.motor_da_tarefa("justificativa-vagas"),
+            saude=saude, pode_ler=lambda url: plataforma_permite_leitura(central, url),
+        )
+    except Exception as erro:  # noqa: BLE001 - a falha fica registrada na tarefa e é notificada
+        salvar_saude(saude)
+        falhar(tarefa, str(erro))
+        salvar_tarefas(tarefas)
+        notificar("falha_adaptador", "A rodada de vagas falhou", f"Erro: {erro}\n\nVeja 'agente tarefas' e 'agente saude'.", central)
+        console.print(f"[red]A rodada falhou: {escape(str(erro))}[/red]")
+        raise typer.Exit(1)
     salvar_base(base)
     salvar_config(config)
+    salvar_saude(saude)
+    tarefa.erro = None
+    tarefa.dados["ultima_execucao"] = f"{date.today():%d/%m/%Y}"
+    salvar_tarefas(tarefas)
 
     proc = resultado.processamento
     console.print(
@@ -240,9 +269,45 @@ def vagas_rodada(
     _tabela_resumo(resultado.resumo.itens)
     if resultado.resumo.risco:
         console.print(f"[red]{len(resultado.resumo.risco)} vaga(s) com indícios de golpe ou risco, fora das recomendações (RN-12).[/red]")
+    for falha in resultado.falhas_adaptadores:
+        console.print(f"[red]Adaptador parado (RF-OP-07): {escape(falha)}[/red]")
     console.print(f"[green]Resumo salvo em[/green] {resultado.arquivo_resumo}")
     if resultado.pedido_ia:
-        console.print(f"Justificativa escrita por IA pendente de autorização: 'agente ia autorizar {resultado.pedido_ia}'.")
+        console.print(f"Justificativa escrita por IA na fila de aprovações: 'agente fila' (item ia:{resultado.pedido_ia}).")
+    _notificar_rodada(resultado, central, config)
+
+
+def _notificar_rodada(resultado, central, config) -> None:
+    """RF-OP-04: resumo diário, vagas acima do limiar, pedido de aprovação e falha de adaptador."""
+    from .operacao.notificacoes import notificar
+    from .radar.resumo import resumo_markdown
+
+    envios = [notificar("resumo_diario", f"Resumo de vagas — {resultado.resumo.data:%d/%m/%Y}",
+                        resumo_markdown(resultado.resumo, config), central)]
+    alertas = resultado.processamento.alertas
+    if alertas:
+        envios.append(notificar(
+            "vaga_acima_limiar", f"{len(alertas)} vaga(s) com aderência ≥ {config.limiar_alerta}",
+            "\n".join(f"- {v.titulo} — {v.empresa or '?'} ({v.nota}): {v.link or 'sem link'}" for v in alertas), central,
+        ))
+    if resultado.pedido_ia:
+        envios.append(notificar(
+            "pedido_aprovacao", "Pedido de aprovação na fila",
+            f"A justificativa escrita das vagas de hoje espera sua autorização: agente fila (item ia:{resultado.pedido_ia}).",
+            central,
+        ))
+    if resultado.falhas_adaptadores:
+        envios.append(notificar(
+            "falha_adaptador", "Adaptador parado",
+            "\n".join(f"- {f}" for f in resultado.falhas_adaptadores) + "\n\nConfira com 'agente saude' e reative quando estiver ok.",
+            central,
+        ))
+    feitos = [e for e in envios if e]
+    if not feitos:
+        return
+    console.print(f"[dim]{len(feitos)} notificação(ões) — canal: {', '.join(sorted({e.canal for e in feitos}))}.[/dim]")
+    if erro := next((e.erro for e in feitos if e.erro), None):
+        console.print(f"[yellow]Notificações ficaram só em arquivo: {escape(erro)}[/yellow]")
 
 
 def _tabela_resumo(itens) -> None:
@@ -283,6 +348,14 @@ def vagas_link(
             descricao=descricao.read_text(encoding="utf-8"), fonte_tipo="link", fonte_origem=f"link:{dominio(url)}",
         )
     else:
+        from .configuracao import carregar_configuracao, plataforma_permite_leitura
+
+        central = carregar_configuracao()
+        if not plataforma_permite_leitura(central, url):
+            motivo = "o modo somente sugestão está ligado" if central.somente_sugestao else "essa plataforma está desligada"
+            console.print(f"[yellow]A página não foi lida: {motivo} (RF-OP-02).[/yellow] Cole a descrição num arquivo e rode:\n"
+                          "  agente vagas link URL --descricao vaga.txt --titulo \"...\" --empresa \"...\"")
+            raise typer.Exit(1)
         try:
             bruta = vaga_de_link(url, baixar, config.dominios_copiloto)
         except ColetaCopiloto as erro:
@@ -305,6 +378,13 @@ def vagas_link(
     if vaga not in proc.adicionadas:
         console.print("[cyan]Essa vaga já estava na base; a nova fonte foi juntada a ela (RF-VG-05).[/cyan]")
     _mostrar_alertas(proc.alertas, proc.arquivo_alerta, config.limiar_alerta)
+    if proc.alertas:
+        from .configuracao import carregar_configuracao
+        from .operacao.notificacoes import notificar
+
+        notificar("vaga_acima_limiar", f"Vaga com aderência ≥ {config.limiar_alerta}",
+                  "\n".join(f"- {v.titulo} — {v.empresa or '?'} ({v.nota}): {v.link or 'sem link'}" for v in proc.alertas),
+                  carregar_configuracao())
     _mostrar_vaga(vaga)
 
 

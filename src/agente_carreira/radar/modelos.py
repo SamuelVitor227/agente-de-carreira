@@ -12,7 +12,6 @@ from pydantic import BaseModel, Field
 from ..storage import diretorio_dados
 from .texto import slug
 
-ARQUIVO_CONFIG = "vagas-config.json"
 ARQUIVO_VAGAS = "vagas-encontradas.json"
 MAX_EMAILS_LEMBRADOS = 5000
 
@@ -241,17 +240,18 @@ def _caminho(arquivo: str) -> Path:
 
 
 def carregar_config() -> ConfigVagas:
-    caminho = _caminho(ARQUIVO_CONFIG)
-    if not caminho.is_file():
-        return ConfigVagas()
-    return ConfigVagas.model_validate_json(caminho.read_text(encoding="utf-8"))
+    """As preferências de vagas moram no arquivo central de configuração (RF-OP-01)."""
+    from ..configuracao import carregar_configuracao
+
+    return carregar_configuracao().vagas
 
 
 def salvar_config(config: ConfigVagas) -> Path:
-    caminho = _caminho(ARQUIVO_CONFIG)
-    caminho.parent.mkdir(parents=True, exist_ok=True)
-    caminho.write_text(config.model_dump_json(indent=2), encoding="utf-8")
-    return caminho
+    from ..configuracao import carregar_configuracao, salvar_configuracao
+
+    central = carregar_configuracao()
+    central.vagas = config
+    return salvar_configuracao(central)
 
 
 def carregar_base() -> BaseVagas:

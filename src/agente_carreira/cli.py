@@ -1304,8 +1304,25 @@ def _curto(texto: str | None, tamanho: int = 40) -> str:
     return texto if len(texto) <= tamanho else texto[: tamanho - 1] + "…"
 
 
-def _fluxo_aprovacao(propostas, motor: str | None = None) -> None:
-    """Antes × depois com contagem de caracteres; aprovar, editar, rejeitar ou pular campo a campo (RF-LI-13)."""
+def _auditar_linkedin(entrada, captura: Path | None = None) -> None:
+    """RF-OP-06: toda alteração aplicada no LinkedIn vai para o log de auditoria."""
+    from .linkedin.propostas import rotulo_do_campo
+    from .operacao.auditoria import registrar_acao
+
+    registrar_acao(
+        plataforma="linkedin",
+        acao="reverter campo" if entrada.tipo == "reversao" else "alterar campo",
+        alvo=rotulo_do_campo(entrada.campo), antes=entrada.anterior, depois=entrada.novo, modo="copiloto",
+        aprovado_em=entrada.aprovado_em, origem_aprovacao=f"log LinkedIn {entrada.id}", captura=captura,
+    )
+
+
+def _fluxo_aprovacao(propostas, motor: str | None = None, tarefa_id: str | None = None) -> None:
+    """Antes × depois com contagem de caracteres; aprovar, editar, rejeitar ou pular campo a campo (RF-LI-13).
+
+    Com tarefa_id, cada decisão confirma um passo da tarefa: interromper (Ctrl+C) pausa a rodada,
+    que depois continua do primeiro campo ainda sem decisão (RF-OP-03).
+    """
     from .linkedin.estado import (
         carregar_estado,
         carregar_log,
@@ -1315,56 +1332,80 @@ def _fluxo_aprovacao(propostas, motor: str | None = None) -> None:
         salvar_log,
     )
     from .linkedin.propostas import limite_do_campo, validar_texto
+    from .operacao.tarefas import carregar_tarefas, confirmar_passo, pausar, salvar_tarefas
 
     estado = carregar_estado()
     log = carregar_log()
+    tarefas = carregar_tarefas() if tarefa_id else None
+    tarefa = tarefas.buscar(tarefa_id) if tarefas and tarefa_id else None
+
+    def concluir_passo(campo: str, pulado: bool = False) -> None:
+        if tarefa is not None:
+            confirmar_passo(tarefa, campo, pulado=pulado)
+            salvar_tarefas(tarefas)
+
     aprovadas = aplicadas = rejeitadas = 0
-    for i, p in enumerate(propostas, 1):
-        limite = limite_do_campo(p.campo)
-        sufixo = f"/{limite}" if limite else ""
-        antes = p.anterior or ""
-        console.print(Panel(
-            Text(antes) if antes else Text("(vazio ou desconhecido)", style="dim"),
-            title=f"{i}/{len(propostas)} · {escape(p.rotulo)} — ANTES · {len(antes)}{sufixo} caracteres",
-            border_style="red",
-        ))
-        novo = p.novo
-        while True:
-            problemas = validar_texto(p.campo, novo)
+    try:
+        for i, p in enumerate(propostas, 1):
+            limite = limite_do_campo(p.campo)
+            sufixo = f"/{limite}" if limite else ""
+            antes = p.anterior or ""
             console.print(Panel(
-                Text(novo), title=f"DEPOIS · {len(novo)}{sufixo} caracteres",
-                border_style="yellow" if problemas else "green",
+                Text(antes) if antes else Text("(vazio ou desconhecido)", style="dim"),
+                title=f"{i}/{len(propostas)} · {escape(p.rotulo)} — ANTES · {len(antes)}{sufixo} caracteres",
+                border_style="red",
             ))
-            for problema in problemas:
-                console.print(f"  [red]• {escape(problema)}[/red]")
-            escolha = typer.prompt("[a]provar, [e]ditar, [r]ejeitar ou [p]ular").lstrip("﻿").strip().lower()[:1]
-            if escolha not in {"a", "e", "r", "p"}:
-                console.print("Opção inválida.")
-                continue
-            if escolha == "e":
-                novo = _ler_texto_editado(typer.prompt("Novo texto (ou caminho de um arquivo .txt/.md)"))
-                continue
-            if escolha == "a" and problemas:
-                console.print("[red]Não dá para aprovar com problemas pendentes — edite o texto.[/red]")
-                continue
-            break
+            novo = p.novo
+            while True:
+                problemas = validar_texto(p.campo, novo)
+                console.print(Panel(
+                    Text(novo), title=f"DEPOIS · {len(novo)}{sufixo} caracteres",
+                    border_style="yellow" if problemas else "green",
+                ))
+                for problema in problemas:
+                    console.print(f"  [red]• {escape(problema)}[/red]")
+                escolha = typer.prompt("[a]provar, [e]ditar, [r]ejeitar ou [p]ular").lstrip("﻿").strip().lower()[:1]
+                if escolha not in {"a", "e", "r", "p"}:
+                    console.print("Opção inválida.")
+                    continue
+                if escolha == "e":
+                    novo = _ler_texto_editado(typer.prompt("Novo texto (ou caminho de um arquivo .txt/.md)"))
+                    continue
+                if escolha == "a" and problemas:
+                    console.print("[red]Não dá para aprovar com problemas pendentes — edite o texto.[/red]")
+                    continue
+                break
 
-        if escolha == "r":
-            rejeitadas += 1
-            continue
-        if escolha == "p":
-            continue
+            if escolha == "r":
+                rejeitadas += 1
+                concluir_passo(p.campo)
+                continue
+            if escolha == "p":
+                concluir_passo(p.campo, pulado=True)
+                continue
 
-        entrada = registrar_aprovacao(log, p.campo, p.anterior, novo, motor=motor)
-        salvar_log(log)
-        aprovadas += 1
-        console.print(f"[green]Aprovado (log {entrada.id}).[/green] Copie o texto abaixo e cole no LinkedIn:")
-        console.print(novo, markup=False, highlight=False)
-        if typer.confirm("Já colou e salvou este campo no LinkedIn?", default=False):
-            marcar_aplicado(log, estado, entrada.id)
+            entrada = registrar_aprovacao(log, p.campo, p.anterior, novo, motor=motor)
             salvar_log(log)
-            salvar_estado(estado)
-            aplicadas += 1
+            aprovadas += 1
+            concluir_passo(p.campo)
+            console.print(f"[green]Aprovado (log {entrada.id}).[/green] Copie o texto abaixo e cole no LinkedIn:")
+            console.print(novo, markup=False, highlight=False)
+            if typer.confirm("Já colou e salvou este campo no LinkedIn?", default=False):
+                marcar_aplicado(log, estado, entrada.id)
+                salvar_log(log)
+                salvar_estado(estado)
+                _auditar_linkedin(entrada)
+                aplicadas += 1
+    except (KeyboardInterrupt, typer.Abort):
+        if tarefa is not None and tarefa.status == "ativa":
+            pausar(tarefa)
+            salvar_tarefas(tarefas)
+            proximo = tarefa.proximo_passo()
+            onde = f" em '{escape(proximo.descricao)}'" if proximo else ""
+            console.print(f"\n[yellow]Rodada pausada{onde}.[/yellow] Rode 'agente li propor' para continuar de onde parou.")
+        else:
+            console.print("\n[yellow]Interrompido.[/yellow]")
+        raise typer.Exit(0)
 
     console.print(f"\n[bold]Resumo:[/bold] {aprovadas} aprovada(s), {aplicadas} aplicada(s), {rejeitadas} rejeitada(s).")
     if aprovadas > aplicadas:
@@ -1401,10 +1442,13 @@ def li_propor(
     foco: str = typer.Option("backend-dotnet", "--foco"),
     cargo: str | None = typer.Option(None, "--cargo", help="Cargo-alvo do título."),
     opcao: int = typer.Option(1, "--opcao", help="Qual das opções de 'agente li titulo' usar."),
+    fila: bool = typer.Option(False, "--fila", help="Manda as alterações para a fila de aprovações em vez de decidir agora (RF-OP-05)."),
 ) -> None:
-    """Propõe as alterações com antes × depois e aprovação campo a campo (RF-LI-13, RF-LI-14)."""
-    from .linkedin.estado import carregar_estado
+    """Propõe as alterações com antes × depois e aprovação campo a campo (RF-LI-13, RF-LI-14, RF-OP-03)."""
+    from .linkedin.estado import carregar_estado, carregar_log, pendentes_de_aplicacao
+    from .linkedin.pendentes import carregar_pendentes, enfileirar, salvar_pendentes
     from .linkedin.propostas import gerar_propostas
+    from .operacao.tarefas import cancelar, carregar_tarefas, confirmar_passo, criar_tarefa, retomar, salvar_tarefas
 
     perfil = carregar_perfil()
     estado = carregar_estado()
@@ -1414,14 +1458,57 @@ def li_propor(
     except ValueError as erro:
         console.print(f"[red]{escape(str(erro))}[/red]")
         raise typer.Exit(1)
+
+    # Campos já aprovados (aguardando aplicação) ou já na fila não são propostos de novo.
+    pendentes = carregar_pendentes()
+    em_andamento = {e.campo for e in pendentes_de_aplicacao(carregar_log())} | pendentes.campos()
+    ja_tratados = [p for p in propostas if p.campo in em_andamento]
+    propostas = [p for p in propostas if p.campo not in em_andamento]
+    if ja_tratados:
+        console.print(f"[dim]{len(ja_tratados)} campo(s) já aprovados ou na fila ficaram de fora.[/dim]")
     if not propostas:
         console.print("[green]Nada a propor: o LinkedIn conhecido já bate com o perfil-mestre.[/green]")
         return
+
+    if fila:
+        novas = enfileirar(pendentes, propostas)
+        salvar_pendentes(pendentes)
+        console.print(f"[green]{novas} alteração(ões) enviadas para a fila de aprovações.[/green] Revise com 'agente fila revisar'.")
+        return
+
+    tarefas = carregar_tarefas()
+    tarefa = tarefas.aberta_do_tipo("linkedin-rodada")
+    if tarefa is not None:
+        proximo = tarefa.proximo_passo()
+        continuar = proximo is not None and typer.confirm(
+            f"Há uma rodada de edições {tarefa.status} ({tarefa.progresso}). Continuar a partir de '{proximo.descricao}'?",
+            default=True,
+        )
+        if continuar:
+            if tarefa.status != "ativa":
+                retomar(tarefa)
+            restantes = set(tarefa.pendentes())
+            propostas = [p for p in propostas if p.campo in restantes]
+            for campo in restantes - {p.campo for p in propostas}:
+                confirmar_passo(tarefa, campo, pulado=True)  # já não difere do LinkedIn
+        else:
+            cancelar(tarefa)
+            tarefa = None
+    if tarefa is None:
+        tarefa = criar_tarefa(
+            tarefas, "linkedin-rodada", f"Rodada de edições do LinkedIn ({len(propostas)} campo(s))",
+            [(p.campo, p.rotulo) for p in propostas],
+        )
+    salvar_tarefas(tarefas)
+    if not propostas:
+        console.print("[green]Nada restante nesta rodada.[/green]")
+        return
+
     if estado.sincronizado_em is None:
         console.print("[yellow]Estado do LinkedIn nunca sincronizado: o 'antes' pode estar vazio. "
                       "Para o antes real, rode 'agente li sincronizar <exportação.zip>'.[/yellow]")
     console.print("[yellow]Lembrete (RF-LI-08): desligue 'Compartilhar atualizações do perfil' antes de uma rodada grande de edições.[/yellow]")
-    _fluxo_aprovacao(propostas)
+    _fluxo_aprovacao(propostas, tarefa_id=tarefa.id)
 
 
 @li_app.command("log")
@@ -1450,8 +1537,12 @@ def li_log(
 
 
 @li_app.command("aplicado")
-def li_aplicado(id_: str = typer.Argument(..., metavar="ID")) -> None:
-    """Marca como aplicada uma alteração aprovada que você já colou no LinkedIn (RF-LI-14)."""
+def li_aplicado(
+    id_: str = typer.Argument(..., metavar="ID"),
+    captura: Path | None = typer.Option(None, "--captura", exists=True, readable=True,
+                                        help="Captura de tela do campo salvo (vai para a auditoria)."),
+) -> None:
+    """Marca como aplicada uma alteração aprovada que você já colou no LinkedIn (RF-LI-14, RF-OP-06)."""
     from .linkedin.estado import carregar_estado, carregar_log, marcar_aplicado, salvar_estado, salvar_log
 
     estado, log = carregar_estado(), carregar_log()
@@ -1462,11 +1553,16 @@ def li_aplicado(id_: str = typer.Argument(..., metavar="ID")) -> None:
         raise typer.Exit(1)
     salvar_log(log)
     salvar_estado(estado)
-    console.print(f"[green]Aplicada:[/green] {escape(entrada.campo)} ({entrada.id}).")
+    _auditar_linkedin(entrada, captura)
+    console.print(f"[green]Aplicada:[/green] {escape(entrada.campo)} ({entrada.id}). Registrada na auditoria.")
 
 
 @li_app.command("reverter")
-def li_reverter(id_: str = typer.Argument(..., metavar="ID")) -> None:
+def li_reverter(
+    id_: str = typer.Argument(..., metavar="ID"),
+    captura: Path | None = typer.Option(None, "--captura", exists=True, readable=True,
+                                        help="Captura de tela do campo revertido (vai para a auditoria)."),
+) -> None:
     """Reverte uma alteração aplicada, com nova aprovação (RF-LI-14)."""
     from .linkedin.estado import carregar_estado, carregar_log, marcar_aplicado, preparar_reversao, salvar_estado, salvar_log
     from .linkedin.propostas import rotulo_do_campo
@@ -1494,6 +1590,7 @@ def li_reverter(id_: str = typer.Argument(..., metavar="ID")) -> None:
         marcar_aplicado(log, estado, reversao.id)
         salvar_log(log)
         salvar_estado(estado)
+        _auditar_linkedin(reversao, captura)
         console.print(f"[green]Reversão aplicada (log {reversao.id}).[/green]")
     else:
         console.print(f"Reversão aprovada; marque depois com 'agente li aplicado {reversao.id}'.")
@@ -1661,16 +1758,29 @@ def li_pauta(
     sem_github: bool = typer.Option(False, "--sem-github", help="Usa só os projetos do perfil-mestre."),
 ) -> None:
     """Pauta de publicações a partir dos projetos do perfil e dos repositórios públicos do GitHub (RF-LI-12)."""
+    from .configuracao import carregar_configuracao
     from .linkedin.github import GitHubIndisponivel, listar_repositorios
     from .linkedin.publicacoes import montar_pauta, salvar_pauta
+    from .operacao.saude import carregar_saude, salvar_saude
 
     perfil = carregar_perfil()
+    central = carregar_configuracao()
+    if not sem_github and (central.somente_sugestao or central.modos_plataforma.get("github") == "desligado"):
+        console.print("[yellow]Modo somente sugestão ou GitHub desligado: pauta só com o perfil-mestre (RF-OP-02).[/yellow]")
+        sem_github = True
     repos = []
     if not sem_github:
-        try:
-            repos = listar_repositorios()
-        except GitHubIndisponivel as erro:
-            console.print(f"[yellow]GitHub indisponível ({escape(str(erro))}); pauta só com o perfil-mestre.[/yellow]")
+        saude = carregar_saude()
+        if not saude.pode_usar("github"):
+            console.print("[yellow]Leitor do GitHub parado após falhas (agente saude reativar github); pauta só com o perfil-mestre.[/yellow]")
+        else:
+            try:
+                repos = listar_repositorios()
+                saude.sucesso("github")
+            except GitHubIndisponivel as erro:
+                saude.falha("github", str(erro))
+                console.print(f"[yellow]GitHub indisponível ({escape(str(erro))}); pauta só com o perfil-mestre.[/yellow]")
+            salvar_saude(saude)
     pauta = montar_pauta(perfil, repos)
     if not pauta.itens:
         console.print("[yellow]Nenhum projeto no perfil-mestre nem repositório público no GitHub.[/yellow]")
@@ -1816,9 +1926,14 @@ def post_aprovar(id_: str = typer.Argument(..., metavar="ID")) -> None:
 
 
 @post_app.command("publicado")
-def post_publicado(id_: str = typer.Argument(..., metavar="ID")) -> None:
-    """Registra que você publicou uma publicação aprovada."""
+def post_publicado(
+    id_: str = typer.Argument(..., metavar="ID"),
+    captura: Path | None = typer.Option(None, "--captura", exists=True, readable=True,
+                                        help="Captura de tela do post publicado (vai para a auditoria)."),
+) -> None:
+    """Registra que você publicou uma publicação aprovada (RF-OP-06)."""
     from .linkedin.publicacoes import carregar_publicacoes, marcar_publicada, salvar_publicacoes
+    from .operacao.auditoria import registrar_acao
 
     colecao = carregar_publicacoes()
     try:
@@ -1834,7 +1949,11 @@ def post_publicado(id_: str = typer.Argument(..., metavar="ID")) -> None:
         console.print(f"[red]{escape(str(erro))}[/red]")
         raise typer.Exit(1)
     salvar_publicacoes(colecao)
-    console.print(f"[green]Registrada como publicada.[/green]")
+    registrar_acao(
+        plataforma="linkedin", acao="publicar post", alvo=pub.titulo, depois=pub.texto, modo="copiloto",
+        aprovado_em=pub.aprovado_em, origem_aprovacao=f"publicação {pub.id}", captura=captura,
+    )
+    console.print("[green]Registrada como publicada e na auditoria.[/green]")
 
 
 # ---------------------------------------------------------------- uso de IA (RF-IA-01 a RF-IA-05)
@@ -1842,10 +1961,24 @@ def post_publicado(id_: str = typer.Argument(..., metavar="ID")) -> None:
 ia_app = typer.Typer(help="Uso de IA: motor por tarefa, fila de pedidos e registro (RF-IA-01 a RF-IA-05).", no_args_is_help=True)
 app.add_typer(ia_app, name="ia")
 
-from .cli_vagas import busca_app, vagas_app  # noqa: E402 - registrado junto dos demais grupos
+from .cli_operacao import (  # noqa: E402 - registrado junto dos demais grupos
+    auditoria_app,
+    config_app,
+    fila_app,
+    notificacoes_app,
+    saude_app,
+    tarefas_app,
+)
+from .cli_vagas import busca_app, vagas_app  # noqa: E402
 
 app.add_typer(busca_app, name="busca")
 app.add_typer(vagas_app, name="vagas")
+app.add_typer(config_app, name="config")
+app.add_typer(fila_app, name="fila")
+app.add_typer(tarefas_app, name="tarefas")
+app.add_typer(auditoria_app, name="auditoria")
+app.add_typer(saude_app, name="saude")
+app.add_typer(notificacoes_app, name="notificacoes")
 
 
 @ia_app.command("motores")

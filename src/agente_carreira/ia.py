@@ -20,14 +20,13 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
+from .configuracao import OPCOES_MOTOR, Configuracao, carregar_configuracao, salvar_configuracao  # noqa: F401
 from .models import PerfilMestre
 from .storage import diretorio_dados
 
-ARQUIVO_CONFIGURACAO = "configuracao.json"
 ARQUIVO_USOS = "uso-ia.json"
 
 MOTORES_EXTERNOS = ("claude", "gemini")
-OPCOES_MOTOR = ("claude", "gemini", "local", "perguntar")
 
 # Tarefas que podem usar IA externa. "perguntar" é o padrão da especificação
 # (decisões em aberto: motor padrão por tarefa = perguntar a cada uso).
@@ -43,30 +42,7 @@ def _agora() -> datetime:
     return datetime.now(timezone.utc)
 
 
-# ---------------------------------------------------------------- RF-IA-01
-
-class Configuracao(BaseModel):
-    """Preferências do agente (semente do RF-OP-01): por ora, o motor de cada tarefa."""
-
-    motores: dict[str, str] = Field(default_factory=dict)
-
-    def motor_da_tarefa(self, tarefa: str) -> str:
-        return self.motores.get(tarefa, "perguntar")
-
-
-def carregar_configuracao() -> Configuracao:
-    caminho = diretorio_dados() / ARQUIVO_CONFIGURACAO
-    if not caminho.is_file():
-        return Configuracao()
-    return Configuracao.model_validate_json(caminho.read_text(encoding="utf-8"))
-
-
-def salvar_configuracao(config: Configuracao) -> Path:
-    caminho = diretorio_dados() / ARQUIVO_CONFIGURACAO
-    caminho.parent.mkdir(parents=True, exist_ok=True)
-    caminho.write_text(config.model_dump_json(indent=2), encoding="utf-8")
-    return caminho
-
+# ---------------------------------------------------------------- RF-IA-01 (preferência central, RF-OP-01)
 
 def definir_motor(config: Configuracao, tarefa: str, motor: str) -> None:
     if tarefa not in TAREFAS:

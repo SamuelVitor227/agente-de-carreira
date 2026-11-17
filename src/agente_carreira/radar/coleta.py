@@ -12,11 +12,12 @@ import email
 import imaplib
 import os
 import re
+from collections import Counter
 from collections.abc import Callable
 from datetime import date
 from email import policy
 from email.message import Message
-from email.utils import parsedate_to_datetime
+from email.utils import parseaddr, parsedate_to_datetime
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin, urlparse
@@ -220,6 +221,33 @@ def vagas_de_email(msg: Message) -> list[VagaBruta]:
                     fonte_tipo="email", fonte_origem=f"{plataforma}-alerta", publicada_em=data,
                 ))
     return vagas
+
+
+REMETENTES_CONHECIDOS = {
+    "linkedin.com": "linkedin", "indeed.com": "indeed", "gupy.io": "gupy", "vagas.com.br": "vagas.com.br",
+    "programathor.com.br": "programathor", "geekhunter.com.br": "geekhunter",
+}
+
+
+def diagnostico_email(msg: Message) -> tuple[str | None, int, bool]:
+    """(plataforma, nº de links de vaga distintos, remetente é uma plataforma conhecida) — para RF-OP-07."""
+    plano, html = _partes(msg)
+    texto = "\n".join(t for t in (plano, html) if t)
+    links: set[str] = set()
+    por_plataforma: Counter[str] = Counter()
+    for plataforma, padrao in PADROES_LINK_VAGA.items():
+        for m in padrao.finditer(texto):
+            link = canonizar(plataforma, m)
+            if link not in links:
+                links.add(link)
+                por_plataforma[plataforma] += 1
+    dominio_remetente = parseaddr(str(msg.get("From", "")))[1].lower().rpartition("@")[2]
+    do_remetente = next(
+        (p for d, p in REMETENTES_CONHECIDOS.items() if dominio_remetente == d or dominio_remetente.endswith("." + d)),
+        None,
+    )
+    plataforma = do_remetente or (por_plataforma.most_common(1)[0][0] if por_plataforma else None)
+    return plataforma, len(links), do_remetente is not None
 
 
 def ler_eml(caminho: Path) -> Message:

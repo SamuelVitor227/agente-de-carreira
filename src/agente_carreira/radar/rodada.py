@@ -16,12 +16,14 @@ from pathlib import Path
 
 from ..ia import TAREFAS, carregar_usos, registrar_pedido, salvar_usos, sanitizar, valores_sensiveis
 from ..models import PerfilMestre
+from ..operacao.saude import RegistroSaude, problema_no_email
 from .aderencia import IndiceTFIDF, calcular_aderencia, documento_perfil, documento_vaga
 from .coleta import (
     INTERVALO_SEGUNDOS,
     Baixador,
     ColetaErro,
     baixar,
+    diagnostico_email,
     dominio_em,
     ler_eml,
     ler_imap,
@@ -31,7 +33,7 @@ from .coleta import (
     vagas_de_pagina,
 )
 from .dedup import incorporar, mesclar
-from .extracao import analisar_html, extrair_campos
+from .extracao import analisar_html, extrair_campos, jobpostings
 from .filtros import PADRAO_ENCERRADA, avaliar_filtros, motivo_expiracao, sinais_estagio, sinais_risco
 from .modelos import BaseVagas, ConfigVagas, Fonte, VagaBruta, VagaEncontrada
 from .resumo import (
@@ -52,6 +54,7 @@ CAMPOS_SEMPRE_DO_TEXTO = (
 )
 
 Dormir = Callable[[float], None]
+PodeLer = Callable[[str], bool]  # modo somente sugestão e modo por plataforma (RF-OP-01, RF-OP-02)
 
 
 def de_bruta(bruta: VagaBruta) -> VagaEncontrada:
@@ -80,12 +83,38 @@ def reextrair(vaga: VagaEncontrada) -> None:
 
 # ---------------------------------------------------------------- coleta
 
+def _sempre(url: str) -> bool:
+    return True
+
+
 def coletar(
     config: ConfigVagas, base: BaseVagas, hoje: date, *, pasta_emails: Path | None, imap: dict[str, str] | None,
     imap_factory=imaplib.IMAP4_SSL, baixar_fn: Baixador = baixar, dormir: Dormir = time.sleep, usar_paginas: bool = True,
-) -> tuple[list[VagaBruta], list[str]]:
+    saude: RegistroSaude | None = None, pode_ler: PodeLer = _sempre,
+) -> tuple[list[VagaBruta], list[str], list[str]]:
+    """Devolve (vagas brutas, avisos da coleta, adaptadores que pararam nesta rodada)."""
+    saude = saude if saude is not None else RegistroSaude()
     brutas: list[VagaBruta] = []
     erros: list[str] = []
+    falhas: list[str] = []
+
+    def ler_mensagem(msg) -> bool:
+        """Lê um alerta; False = deixar o e-mail guardado para reprocessar (adaptador parado)."""
+        plataforma, links, conhecido = diagnostico_email(msg)
+        nome = f"email:{plataforma}"
+        if plataforma and not saude.pode_usar(nome):
+            erros.append(f"{nome}: adaptador parado; o e-mail ficou guardado (agente saude reativar {nome})")
+            return False
+        vagas = vagas_de_email(msg)
+        if problema := problema_no_email(plataforma, links, len(vagas), conhecido):
+            if saude.falha(nome, problema, parar=True):
+                falhas.append(f"{nome}: {problema}")
+            erros.append(f"{nome}: {problema}; o e-mail ficou guardado para reprocessar")
+            return False
+        if plataforma:
+            saude.sucesso(nome)
+        brutas.extend(vagas)
+        return True
 
     if pasta_emails and pasta_emails.is_dir():
         processados = pasta_emails / "processados"
@@ -97,21 +126,28 @@ def coletar(
                 continue
             msgid = (msg.get("Message-ID") or caminho.name).strip()
             if msgid not in base.emails_processados:
-                brutas.extend(vagas_de_email(msg))
+                if not ler_mensagem(msg):
+                    continue
                 base.lembrar_email(msgid)
             processados.mkdir(exist_ok=True)
             caminho.replace(processados / caminho.name)
 
     if imap:
-        desde = base.ultima_rodada.date() - timedelta(days=1) if base.ultima_rodada else hoje - timedelta(days=DIAS_IMAP_PRIMEIRA_VEZ)
-        try:
-            for msgid, msg in ler_imap(imap, desde, imap_factory):
-                if msgid in base.emails_processados:
-                    continue
-                brutas.extend(vagas_de_email(msg))
-                base.lembrar_email(msgid)
-        except (ColetaErro, OSError, imaplib.IMAP4.error) as erro:
-            erros.append(f"e-mail (IMAP): {erro}")
+        if not saude.pode_usar("imap"):
+            erros.append("imap: adaptador parado após falhas seguidas (agente saude reativar imap)")
+        else:
+            desde = base.ultima_rodada.date() - timedelta(days=1) if base.ultima_rodada else hoje - timedelta(days=DIAS_IMAP_PRIMEIRA_VEZ)
+            mensagens = []
+            try:
+                mensagens = ler_imap(imap, desde, imap_factory)
+                saude.sucesso("imap")
+            except (ColetaErro, OSError, imaplib.IMAP4.error) as erro:
+                if saude.falha("imap", str(erro)):
+                    falhas.append(f"imap: {erro}")
+                erros.append(f"e-mail (IMAP): {erro}")
+            for msgid, msg in mensagens:
+                if msgid not in base.emails_processados and ler_mensagem(msg):
+                    base.lembrar_email(msgid)
 
     if usar_paginas:
         cargos = config.todos_cargos()
@@ -119,27 +155,42 @@ def coletar(
             url = empresa.pagina_carreira
             if not url:
                 continue
+            if not pode_ler(url):
+                erros.append(f"{empresa.nome}: página não lida (modo somente sugestão ou plataforma desligada)")
+                continue
+            nome = f"pagina:{empresa.nome}"
+            if not saude.pode_usar(nome):
+                erros.append(f"{nome}: adaptador parado (agente saude reativar \"{nome}\")")
+                continue
             try:
                 if not robots_permite(url, baixar_fn):
                     erros.append(f"{empresa.nome}: o robots.txt não permite ler a página de carreira")
                     continue
                 status, html = baixar_fn(url)
                 if status >= 400:
-                    erros.append(f"{empresa.nome}: a página de carreira respondeu HTTP {status}")
-                    continue
+                    raise ColetaErro(f"a página de carreira respondeu HTTP {status}")
+                pagina = analisar_html(html)
+                if not pagina.links and not jobpostings(pagina.jsonld):
+                    raise ColetaErro("a página não tem links nem dados de vagas: o layout mudou")
                 brutas.extend(vagas_de_pagina(url, html, cargos, empresa.nome))
+                saude.sucesso(nome)
             except ColetaErro as erro:
+                if saude.falha(nome, str(erro)):
+                    falhas.append(f"{nome}: {erro}")
                 erros.append(f"{empresa.nome}: {erro}")
             finally:
                 dormir(INTERVALO_SEGUNDOS)
-    return brutas, erros
+    return brutas, erros, falhas
 
 
-def enriquecer(vagas: list[VagaEncontrada], config: ConfigVagas, baixar_fn: Baixador, dormir: Dormir) -> int:
+def enriquecer(vagas: list[VagaEncontrada], config: ConfigVagas, baixar_fn: Baixador, dormir: Dormir,
+               pode_ler: PodeLer = _sempre) -> int:
     """Abre a página das vagas sem descrição, só em domínios permitidos e com robots.txt respeitado."""
     abertas = 0
     for vaga in vagas:
         if vaga.descricao or not vaga.link or not dominio_em(vaga.link, config.dominios_permitidos):
+            continue
+        if not pode_ler(vaga.link):
             continue
         try:
             if not robots_permite(vaga.link, baixar_fn):
@@ -181,7 +232,7 @@ def avaliar(
 
 def expirar(
     base: BaseVagas, hoje: date, config: ConfigVagas, *, baixar_fn: Baixador | None = None,
-    dormir: Dormir = time.sleep, verificar_links: bool = False,
+    dormir: Dormir = time.sleep, verificar_links: bool = False, pode_ler: PodeLer = _sempre,
 ) -> list[VagaEncontrada]:
     """Marca vagas expiradas e as tira do resumo (RF-VG-12)."""
     expiradas: list[VagaEncontrada] = []
@@ -189,7 +240,7 @@ def expirar(
         if vaga.status not in ("nova", "no_resumo", "salva"):
             continue
         if (verificar_links and baixar_fn and vaga.status != "nova" and vaga.link
-                and dominio_em(vaga.link, config.dominios_permitidos)):
+                and dominio_em(vaga.link, config.dominios_permitidos) and pode_ler(vaga.link)):
             try:
                 if robots_permite(vaga.link, baixar_fn):
                     status, html = baixar_fn(vaga.link)
@@ -223,12 +274,12 @@ class Processamento:
 def processar(
     brutas: list[VagaBruta], base: BaseVagas, perfil: PerfilMestre, config: ConfigVagas, hoje: date, *,
     baixar_fn: Baixador = baixar, dormir: Dormir = time.sleep, enriquecer_links: bool = True,
-    verificar_links: bool = False,
+    verificar_links: bool = False, pode_ler: PodeLer = _sempre,
 ) -> Processamento:
     adicionadas, por_mescla, destinos = incorporar(base, [de_bruta(b) for b in brutas])
     for vaga in por_mescla:
         reextrair(vaga)
-    abertas = enriquecer(adicionadas, config, baixar_fn, dormir) if enriquecer_links else 0
+    abertas = enriquecer(adicionadas, config, baixar_fn, dormir, pode_ler) if enriquecer_links else 0
 
     a_avaliar = adicionadas + [v for v in por_mescla if v.status in ("nova", "eliminada") and v not in adicionadas]
     ativas = [v for v in base.itens if v.status != "expirada"]
@@ -237,7 +288,8 @@ def processar(
     for vaga in a_avaliar:
         avaliar(vaga, perfil, config, indice, vetor_perfil, hoje)
 
-    expiradas = expirar(base, hoje, config, baixar_fn=baixar_fn, dormir=dormir, verificar_links=verificar_links)
+    expiradas = expirar(base, hoje, config, baixar_fn=baixar_fn, dormir=dormir, verificar_links=verificar_links,
+                        pode_ler=pode_ler)
     alertas = selecionar_alertas(base, config)
     return Processamento(
         adicionadas=adicionadas, mescladas=por_mescla, destinos=destinos, abertas=abertas,
@@ -255,6 +307,12 @@ def pedir_justificativa(vagas: list[VagaEncontrada], perfil: PerfilMestre, motor
     motor = "claude" if motor_configurado == "perguntar" else motor_configurado
     prompt, removidos = sanitizar(prompt_justificativas(vagas, perfil, motor), valores_sensiveis(perfil))
     usos = carregar_usos()
+    # Um pedido de justificativa por vez na fila: o de hoje substitui o que ainda não foi decidido.
+    for antigo in usos.pendentes():
+        if antigo.tarefa == "justificativa-vagas":
+            antigo.autorizacao = "descartado"
+            antigo.prompt_pendente = None
+            antigo.resultado = f"substituído pelo pedido da rodada de {hoje:%d/%m/%Y}"
     uso = registrar_pedido(
         usos, tarefa="justificativa-vagas", descricao=TAREFAS["justificativa-vagas"], motor=motor,
         dados=dados_enviados_justificativa(vagas), prompt=prompt, removidos=removidos,
@@ -272,6 +330,7 @@ class ResultadoRodada:
     arquivo_resumo: Path
     erros: list[str]
     pedido_ia: str | None
+    falhas_adaptadores: list[str] = field(default_factory=list)
 
 
 def executar_rodada(
@@ -279,14 +338,15 @@ def executar_rodada(
     pasta_emails: Path | None, imap: dict[str, str] | None, imap_factory=imaplib.IMAP4_SSL,
     baixar_fn: Baixador = baixar, dormir: Dormir = time.sleep, usar_paginas: bool = True,
     enriquecer_links: bool = True, verificar_links: bool = False, motor_justificativa: str = "perguntar",
+    saude: RegistroSaude | None = None, pode_ler: PodeLer = _sempre,
 ) -> ResultadoRodada:
-    brutas, erros = coletar(
+    brutas, erros, falhas = coletar(
         config, base, hoje, pasta_emails=pasta_emails, imap=imap, imap_factory=imap_factory,
-        baixar_fn=baixar_fn, dormir=dormir, usar_paginas=usar_paginas,
+        baixar_fn=baixar_fn, dormir=dormir, usar_paginas=usar_paginas, saude=saude, pode_ler=pode_ler,
     )
     proc = processar(
         brutas, base, perfil, config, hoje, baixar_fn=baixar_fn, dormir=dormir,
-        enriquecer_links=enriquecer_links, verificar_links=verificar_links,
+        enriquecer_links=enriquecer_links, verificar_links=verificar_links, pode_ler=pode_ler,
     )
     resumo = montar_resumo(
         base, config, hoje, eliminadas=proc.eliminadas, expiradas=len(proc.expiradas),
@@ -299,5 +359,5 @@ def executar_rodada(
     pedido = pedir_justificativa(vagas_do_resumo, perfil, motor_justificativa, hoje)
     return ResultadoRodada(
         coletadas=len(brutas), processamento=proc, resumo=resumo, arquivo_resumo=arquivo,
-        erros=erros, pedido_ia=pedido,
+        erros=erros, pedido_ia=pedido, falhas_adaptadores=falhas,
     )

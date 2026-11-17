@@ -566,6 +566,17 @@ def test_rodada_completa_idempotente(dados_em_tmp):
     assert len(base.itens) == 4 and segunda.resumo.itens == []
 
 
+def test_novo_pedido_de_justificativa_substitui_o_pendente(dados_em_tmp):
+    from agente_carreira.radar.rodada import pedir_justificativa
+
+    vaga = _vaga(descricao="Requisitos: C#")
+    primeiro = pedir_justificativa([vaga], _perfil(), "perguntar", HOJE)
+    segundo = pedir_justificativa([vaga], _perfil(), "perguntar", HOJE)
+    usos = carregar_usos()
+    assert [u.id for u in usos.pendentes()] == [segundo]
+    assert usos.buscar(primeiro).autorizacao == "descartado"
+
+
 def test_rodada_com_motor_local_nao_pede_ia(dados_em_tmp):
     base, config = BaseVagas(), _config()
     pasta = dados_em_tmp / "caixa"

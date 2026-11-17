@@ -84,6 +84,13 @@ Agente de IA para gestão de carreira: otimização de currículo, perfil no Lin
 | RF-VG-11 | Aprendizado com feedback (interessa ou não, e o motivo): ajusta pesos e sugere filtros | ✅ Implementado |
 | RF-VG-12 | Vagas expiradas (prazo, idade, anúncio encerrado, link fora do ar) saem do resumo | ✅ Implementado |
 | RF-VG-13 | Regras de estágio (RN-07): sem matrícula ativa, estágio sai do resumo; jornada acima de 6h/30h sinalizada | ✅ Implementado |
+| RF-OP-01 | Preferências num só lugar: buscas, limites diários, limiares, horários, notificações, modo por plataforma e motor por tarefa | ✅ Implementado |
+| RF-OP-02 | Modo global "somente sugestão": nenhuma plataforma é tocada | ✅ Implementado |
+| RF-OP-03 | Pausar, retomar e cancelar tarefas; retomar a partir do último passo confirmado | ✅ Implementado |
+| RF-OP-04 | Notificações por e-mail ou push (resumo diário, vaga acima do limiar, pedido de aprovação, falha de adaptador) | ✅ Implementado |
+| RF-OP-05 | Fila única de aprovações (usos de IA, publicações, alterações do LinkedIn) com aprovar, editar ou rejeitar | ✅ Implementado |
+| RF-OP-06 | Log de auditoria das ações externas: plataforma, ação, data e hora, antes e depois, aprovação e captura | ✅ Implementado |
+| RF-OP-07 | Saúde dos adaptadores: parar e avisar ao detectar erro ou mudança de layout | ✅ Implementado |
 
 ## Como usar
 
@@ -141,7 +148,18 @@ uv run agente vagas link URL [--descricao vaga.txt]   # vaga a partir de um link
 uv run agente vagas resumo [--ia]        # resumo do dia; --ia prepara a justificativa escrita
 uv run agente vagas ver ID / feedback ID --interessa|--nao-interessa --motivo X / salvar ID / descartar ID
 uv run agente vagas agendar --hora 07:00 # rodada diária no Agendador do Windows
+uv run agente config                     # todas as preferências; altere com 'config definir CAMINHO VALOR'
+uv run agente config sugestao --ligar    # modo somente sugestão: nenhuma plataforma é tocada
+uv run agente fila / fila revisar        # fila única de aprovações (aprovar, editar, rejeitar)
+uv run agente tarefas / pausar|retomar|cancelar ID   # tarefas, inclusive a rodada diária
+uv run agente auditoria / auditoria ver ID           # ações externas com antes, depois e aprovação
+uv run agente saude / saude reativar NOME            # adaptadores parados por erro ou layout novo
+uv run agente notificacoes teste         # testa o canal de notificação
 ```
+
+### Notificações
+
+O canal padrão é o e-mail (`agente config definir notificacao.canal email|push|arquivo` e `notificacao.email_para`). As credenciais ficam só em variáveis de ambiente: `AGENTE_SMTP_HOST`, `AGENTE_SMTP_PORTA` (587), `AGENTE_SMTP_USUARIO` e `AGENTE_SMTP_SENHA` para e-mail, ou `AGENTE_NTFY_TOPICO` para push pelo [ntfy](https://ntfy.sh). Toda notificação também fica em `data/notificacoes/`; sem canal configurado, ela só fica lá.
 
 ### Alertas de vagas por e-mail
 

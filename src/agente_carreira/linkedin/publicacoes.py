@@ -221,7 +221,7 @@ class Publicacao(BaseModel):
     id: str = Field(default_factory=lambda: uuid4().hex[:6])
     titulo: str
     texto: str
-    status: Literal["rascunho", "aprovado", "publicado"] = "rascunho"
+    status: Literal["rascunho", "aprovado", "publicado", "rejeitado"] = "rascunho"
     motor: str | None = None  # RF-IA-06: quem escreveu a versão atual (None = modelo local)
     criada_em: datetime = Field(default_factory=_agora)
     aprovado_em: datetime | None = None
@@ -255,6 +255,12 @@ def aprovar_publicacao(pub: Publicacao) -> None:
         raise ValueError("; ".join(problemas))
     pub.status = "aprovado"
     pub.aprovado_em = _agora()
+
+
+def rejeitar_publicacao(pub: Publicacao) -> None:
+    if pub.status != "rascunho":
+        raise ValueError(f"Só rascunhos podem ser rejeitados (status atual: {pub.status}).")
+    pub.status = "rejeitado"
 
 
 def marcar_publicada(pub: Publicacao) -> None:
