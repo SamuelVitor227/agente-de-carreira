@@ -61,7 +61,7 @@ Os dados ficam em `data/perfil-mestre.json` (fora do git), configurável pela va
 
 ## Documentação
 
-- [Especificação de Requisitos](docs/Agente_de_Carreira_Especificacao_de_Requisitos.pdf) — documento completo *Agente de Carreira — Especificação de Requisitos* (versão de 16/11/2026), a fonte da verdade do projeto.
+- [Especificação de Requisitos](<docs/Agente de Carreira — Especificação de Requisitos.pdf>) — documento completo *Agente de Carreira — Especificação de Requisitos* (versão de 16/11/2026), a fonte da verdade do projeto.
 
 ## Decisões em aberto
 
