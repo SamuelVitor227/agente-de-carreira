@@ -230,3 +230,34 @@ def data_para_cli(texto: str) -> str | None:
     ano = ano if len(ano) == 4 else f"20{ano}"
     momento = datetime.strptime(f"{ano}-{int(mes):02d}-{int(dia):02d} {hora}", "%Y-%m-%d %H:%M")
     return momento.strftime("%Y-%m-%d %H:%M")
+
+
+# ---------------------------------------------------------------- formulário "Que vagas você procura?"
+
+def comandos_busca(respostas: dict, existentes: set[str]) -> tuple[list[list[str]], list[str]]:
+    """Uma busca por área marcada, com o nome da área (o agente usa esse nome para escolher o currículo).
+
+    Devolve (comandos 'busca criar', áreas puladas porque já têm busca). ValueError = resposta a corrigir.
+    """
+    focos = [f for f in respostas.get("focos", []) if f in FOCOS]
+    if not focos:
+        raise ValueError("Marque pelo menos uma área.")
+    if not respostas.get("niveis") or not respostas.get("contratos"):
+        raise ValueError("Marque pelo menos um nível e um tipo de contrato.")
+    salario = str(respostas.get("salario", "")).replace("R$", "").replace(" ", "").strip()
+    if salario:
+        salario = salario.replace(".", "").replace(",", ".")
+        try:
+            float(salario)
+        except ValueError:
+            raise ValueError("O salário precisa ser só número, ex.: 1500.") from None
+    comuns = ["--niveis", ",".join(respostas["niveis"]), "--contratos", ",".join(respostas["contratos"])]
+    if str(respostas.get("cidades", "")).strip():
+        comuns += ["--localidades", str(respostas["cidades"]).strip()]
+    if not respostas.get("remoto", True):
+        comuns.append("--sem-remoto")
+    if salario:
+        comuns += ["--salario-minimo", salario]
+    comandos = [["busca", "criar", "--nome", foco, "--foco", foco, *comuns] for foco in focos if foco not in existentes]
+    puladas = [FOCOS[f] for f in focos if f in existentes]
+    return comandos, puladas

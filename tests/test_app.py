@@ -235,3 +235,31 @@ def test_lista_numerada_vira_botoes():
     assert opcoes_numeradas(linhas) == [("1", "Perfil técnico"), ("2", "Inglês"), ("3", "Outro")]
     assert opcoes_numeradas(["  1. só um"]) == []
     assert opcoes_numeradas(["  1. a", "  3. b"]) == []                     # sequência quebrada: não arrisca
+
+
+def test_varias_areas_viram_uma_busca_cada_e_comandos_existem():
+    respostas = {"focos": ["backend-dotnet", "dados", "suporte"], "niveis": ["estagio", "junior"],
+                 "contratos": ["estagio", "clt"], "cidades": "Belo Horizonte, Contagem", "remoto": False,
+                 "salario": "R$ 1.500,50"}
+    comandos, puladas = estado.comandos_busca(respostas, existentes={"dados"})
+    assert [c[3] for c in comandos] == ["backend-dotnet", "suporte"]        # nome = área
+    assert puladas == [estado.FOCOS["dados"]]
+    assert comandos[0][comandos[0].index("--salario-minimo") + 1] == "1500.50"
+    assert "--sem-remoto" in comandos[0] and "Belo Horizonte, Contagem" in comandos[0]
+    criar = get_command(cli_app).commands["busca"].commands["criar"]
+    opcoes = {o for p in criar.params for o in p.opts}
+    assert all(t in opcoes for c in comandos for t in c if t.startswith("--"))
+    for invalida, mensagem in (({**respostas, "focos": []}, "área"), ({**respostas, "niveis": []}, "nível"),
+                               ({**respostas, "salario": "mil"}, "número")):
+        with pytest.raises(ValueError, match=mensagem):
+            estado.comandos_busca(invalida, set())
+
+
+def test_varias_buscas_criadas_pela_cli():
+    from agente_carreira.radar.modelos import carregar_config
+
+    comandos, _ = estado.comandos_busca({"focos": ["backend-dotnet", "dados"], "niveis": ["estagio"],
+                                         "contratos": ["estagio"], "remoto": True}, set())
+    for comando in comandos:
+        assert _rodar(comando, [])[0] == 0
+    assert [b.nome for b in carregar_config().buscas] == ["backend-dotnet", "dados"]

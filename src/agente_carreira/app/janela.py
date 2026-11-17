@@ -158,15 +158,19 @@ class Formulario(tk.Toplevel):
                     tk.Radiobutton(bloco, text=nome, value=valor, variable=var, bg=FUNDO, font=F_NORMAL, anchor="w",
                                    activebackground=FUNDO).pack(anchor="w")
                 self._leitores[chave] = var.get
-            elif tipo == "varios":
+            elif tipo in ("varios", "varios_lista"):  # caixas de marcar: na mesma linha ou uma embaixo da outra
                 marcados = set(padrao or [])
                 variaveis = []
                 linha = tk.Frame(bloco, bg=FUNDO)
                 linha.pack(anchor="w")
                 for valor, nome in opcoes:
                     var = tk.BooleanVar(value=valor in marcados)
-                    tk.Checkbutton(linha, text=nome, variable=var, bg=FUNDO, font=F_NORMAL,
-                                   activebackground=FUNDO).pack(side="left", padx=(0, 10))
+                    caixa = tk.Checkbutton(linha, text=nome, variable=var, bg=FUNDO, font=F_NORMAL, anchor="w",
+                                           activebackground=FUNDO)
+                    if tipo == "varios":
+                        caixa.pack(side="left", padx=(0, 10))
+                    else:
+                        caixa.pack(anchor="w")
                     variaveis.append((valor, var))
                 self._leitores[chave] = lambda v=variaveis: [valor for valor, var in v if var.get()]
             elif tipo == "marcar":
@@ -198,9 +202,13 @@ def perguntar(pai, titulo, explicacao, campos, botao="Continuar") -> dict | None
 class JanelaExecucao(tk.Toplevel):
     """Mostra a saída de um comando e transforma as perguntas dele em botões e campos."""
 
-    def __init__(self, app: "App", titulo: str, args: list[str], ao_fim: Callable[[int], None] | None = None) -> None:
+    def __init__(self, app: "App", titulo: str, args: list[str] | list[list[str]],
+                 ao_fim: Callable[[int], None] | None = None) -> None:
         super().__init__(app.raiz)
-        self.app, self.args, self.ao_fim = app, args, ao_fim
+        self.app, self.ao_fim = app, ao_fim
+        # Um comando, ou vários em sequência na mesma janela (ex.: uma busca por área).
+        self._comandos = [list(c) for c in args] if args and isinstance(args[0], list) else [list(args)]
+        self._pior = 0
         self.title(f"{titulo} — {NOME_APP}")
         self.configure(bg=FUNDO)
         self.geometry("1000x660")
@@ -240,12 +248,14 @@ class JanelaExecucao(tk.Toplevel):
         self._fechar.pack(side="right")
         self.protocol("WM_DELETE_WINDOW", self._ao_fechar)
 
-        execucao = Execucao(args, ao_escrever=lambda t: self._fila.put(("texto", t)),
-                            ao_perguntar=lambda p: self._fila.put(("pergunta", p)),
-                            ao_terminar=lambda c: self._fila.put(("fim", c)))
-        execucao.iniciar()
+        self._iniciar_proximo()
         self.after(40, self._processar)
         self.after(200, self._animar)
+
+    def _iniciar_proximo(self) -> None:
+        Execucao(self._comandos.pop(0), ao_escrever=lambda t: self._fila.put(("texto", t)),
+                 ao_perguntar=lambda p: self._fila.put(("pergunta", p)),
+                 ao_terminar=lambda c: self._fila.put(("fim", c))).iniciar()
 
     # -- saída
     def _escrever(self, texto: str) -> None:
@@ -344,6 +354,12 @@ class JanelaExecucao(tk.Toplevel):
 
     # -- fim
     def _terminar(self, codigo: int) -> None:
+        self._pior = self._pior or codigo
+        if self._comandos and codigo != 130:  # cancelar para a sequência inteira
+            self._escrever("\n")
+            self._iniciar_proximo()
+            return
+        codigo = self._pior
         self._rodando = False
         self._area_pergunta.pack_forget()
         textos = {0: ("Pronto ✓", DESTAQUE), 130: ("Cancelado", SUAVE)}
@@ -448,7 +464,8 @@ class App:
         if self.raiz.winfo_exists():
             self.mostrar(self.pagina_atual)
 
-    def executar(self, titulo: str, args: list[str], depois: Callable[[], None] | None = None) -> None:
+    def executar(self, titulo: str, args: list[str] | list[list[str]],
+                 depois: Callable[[], None] | None = None) -> None:
         """Roda o comando numa janela; `depois` roda só se ele terminar bem (ex.: abrir a pasta gerada)."""
         def ao_fim(codigo: int) -> None:
             self.atualizar()
@@ -522,9 +539,15 @@ class App:
         from ..radar.modelos import carregar_config
 
         existentes = {b.nome for b in carregar_config().buscas}
-        nome_padrao = next(n for n in ("principal", "busca-2", "busca-3", "busca-4", "busca-5") if n not in existentes)
-        r = perguntar(self.raiz, "Que vagas você procura?", "O agente usa isso para procurar e dar nota às vagas.", [
-            ("foco", "Área", "escolha", list(estado.FOCOS.items()), "backend-dotnet", None),
+        livres = [f for f in estado.FOCOS if f not in existentes]
+        if not livres:
+            messagebox.showinfo(NOME_APP, "Todas as áreas já têm uma busca. Para mudar uma, remova-a em "
+                                "Configurações e crie de novo.", parent=self.raiz)
+            return
+        opcoes_area = [(f, nome + ("  (já tem busca)" if f in existentes else "")) for f, nome in estado.FOCOS.items()]
+        campos = [
+            ("focos", "Áreas (pode marcar mais de uma)", "varios_lista", opcoes_area, [livres[0]],
+             "Cada área vira uma busca separada, com os cargos e nomes de vaga daquela área."),
             ("niveis", "Nível", "varios", [("estagio", "Estágio"), ("trainee", "Trainee"), ("junior", "Júnior"),
                                            ("pleno", "Pleno")], ["estagio", "trainee", "junior"], None),
             ("contratos", "Tipo de contrato", "varios", [("estagio", "Estágio"), ("clt", "CLT"), ("pj", "PJ")],
@@ -533,28 +556,26 @@ class App:
              "Separe por vírgula. Em branco = Belo Horizonte e região metropolitana."),
             ("remoto", "Aceito trabalhar remoto", "marcar", None, True, None),
             ("salario", "Salário ou bolsa mínima (opcional)", "texto", None, "", "Só números, ex.: 1500"),
-            ("nome", "Nome desta busca", "texto", None, nome_padrao, "Só para você reconhecer depois."),
-        ], botao="Salvar busca")
-        if not r:
-            return
-        if not r["niveis"] or not r["contratos"]:
-            messagebox.showwarning(NOME_APP, "Escolha pelo menos um nível e um tipo de contrato.", parent=self.raiz)
-            return
-        args = ["busca", "criar", "--nome", r["nome"].strip() or nome_padrao, "--foco", r["foco"],
-                "--niveis", ",".join(r["niveis"]), "--contratos", ",".join(r["contratos"])]
-        if r["cidades"].strip():
-            args += ["--localidades", r["cidades"].strip()]
-        if not r["remoto"]:
-            args.append("--sem-remoto")
-        salario = r["salario"].strip().replace("R$", "").replace(".", "").replace(",", ".").strip()
-        if salario:
-            try:
-                float(salario)
-            except ValueError:
-                messagebox.showwarning(NOME_APP, "O salário precisa ser só número, ex.: 1500.", parent=self.raiz)
+        ]
+        respostas = None
+        while True:
+            respostas = perguntar(self.raiz, "Que vagas você procura?", "O agente usa isso para procurar e dar nota "
+                                  "às vagas.", campos if respostas is None else [
+                                      (c, t, tp, op, respostas.get(c, p), aj) for c, t, tp, op, p, aj in campos],
+                                  botao="Salvar busca")
+            if not respostas:
                 return
-            args += ["--salario-minimo", salario]
-        self.executar("Salvar busca de vagas", args)
+            try:
+                comandos, puladas = estado.comandos_busca(respostas, existentes)
+                break
+            except ValueError as erro:
+                messagebox.showwarning(NOME_APP, str(erro), parent=self.raiz)  # volta ao formulário com o que já marcou
+        if puladas:
+            messagebox.showinfo(NOME_APP, "Estas áreas já tinham busca e ficaram como estavam:\n• " + "\n• ".join(puladas)
+                                + "\n\nPara mudar uma delas, remova-a em Configurações e crie de novo.", parent=self.raiz)
+        if comandos:
+            self.executar("Salvar busca de vagas" if len(comandos) == 1 else f"Salvar {len(comandos)} buscas de vagas",
+                          comandos)
 
     def abrir_pasta_dados(self) -> None:
         from ..storage import diretorio_dados
