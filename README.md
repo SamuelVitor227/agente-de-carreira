@@ -40,6 +40,9 @@ Agente de IA para gestão de carreira: otimização de currículo, perfil no Lin
 | RF-CV-01 | Conjunto de vagas-alvo por foco (padrão 30) com extração de termos mais frequentes (motor local) | ✅ Implementado |
 | RF-CV-02 | Relatório de lacunas em três grupos (já no CV / tem mas não aparece / não tem) | ✅ Implementado |
 | RF-CV-03 | Reescrita de resumo, experiências e projetos em modo copiloto, com autorização de uso de IA (RF-IA-02) | ✅ Implementado |
+| RF-CV-04 | Reordenação de seções e itens pelo peso no nível-alvo (formação/projetos/certificações antes de fora da área) | ✅ Implementado |
+| RF-CV-05 | Nota de compatibilidade ATS (estrutura, títulos padrão, termos cobertos, legibilidade) com histórico do que mudou | ✅ Implementado |
+| RF-CV-06 | Sugestões reais para fechar lacunas (curso/certificação/projeto), priorizando catálogos que você já tem (DIO) | ✅ Implementado |
 
 ## Como usar
 
@@ -66,6 +69,9 @@ uv run agente vaga adicionar          # salva vaga-alvo (descrição por arquivo
 uv run agente cv termos --foco X      # termos mais frequentes do conjunto de vagas
 uv run agente cv lacunas              # relatório de lacunas em 3 grupos
 uv run agente cv reescrever           # gera prompt de reescrita p/ Claude/Gemini (com autorização)
+uv run agente cv ordenar --nivel estagio   # ordem de seções pelo peso no nível-alvo
+uv run agente cv nota                 # nota ATS 0-100 com o que mudou desde a última revisão
+uv run agente cv fechar-lacunas       # curso/certificação/projeto para cada lacuna sem lastro
 ```
 
 Os dados ficam em `data/perfil-mestre.json` (fora do git), configurável pela variável `AGENTE_CARREIRA_DATA`.

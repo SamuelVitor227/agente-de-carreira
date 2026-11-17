@@ -38,7 +38,7 @@ perfil_app = typer.Typer(help="Gerencia o perfil-mestre (RF-PM-01, RF-PM-06, RF-
 experiencia_app = typer.Typer(help="Gerencia experiências (RF-PM-03, RF-PM-05).", no_args_is_help=True)
 conquista_app = typer.Typer(help="Banco de conquistas reutilizáveis (RF-PM-04).", no_args_is_help=True)
 vaga_app = typer.Typer(help="Vagas-alvo para análise (RF-CV-01).", no_args_is_help=True)
-cv_app = typer.Typer(help="Otimização do currículo (RF-CV-01 a RF-CV-03).", no_args_is_help=True)
+cv_app = typer.Typer(help="Otimização do currículo (RF-CV-01 a RF-CV-06).", no_args_is_help=True)
 app.add_typer(perfil_app, name="perfil")
 app.add_typer(experiencia_app, name="experiencia")
 app.add_typer(conquista_app, name="conquista")
@@ -529,6 +529,96 @@ def cv_lacunas(
     _secao("1. Você tem e já está no CV", "green", relatorio.ja_no_cv, "nada a fazer")
     _secao("2. Você tem, mas não aparece", "yellow", relatorio.tem_mas_nao_aparece, "basta destacar no CV")
     _secao("3. Você não tem (ou não registrou)", "red", relatorio.nao_tem, "fechar de verdade — nunca inventar (RN-02)")
+
+
+@cv_app.command("ordenar")
+def cv_ordenar(
+    nivel: str = typer.Option("estagio", "--nivel", help="Nível-alvo: estagio, trainee, junior, pleno, senior."),
+) -> None:
+    """Mostra a ordem de seções e itens pelo peso no nível-alvo (RF-CV-04)."""
+    from .analise.ordenacao import ordenar_cv
+
+    perfil = carregar_perfil()
+    estrutura = ordenar_cv(perfil, nivel=nivel)
+    if not estrutura.secoes:
+        console.print("[yellow]Perfil ainda sem conteúdo para ordenar.[/yellow]")
+        raise typer.Exit(0)
+    console.print(f"[bold]Ordem proposta para o CV — nível {nivel}[/bold]")
+    for i, secao in enumerate(estrutura.secoes, 1):
+        motivo = f" [dim]({secao.motivo})[/dim]" if secao.motivo else ""
+        console.print(f"\n{i}. [bold cyan]{secao.titulo}[/bold cyan]{motivo}")
+        for item in secao.itens:
+            console.print(f"   • {item}")
+
+
+@cv_app.command("nota")
+def cv_nota(
+    foco: str | None = typer.Option(None, "--foco"),
+    limite: int = typer.Option(30, "--limite"),
+    nivel: str = typer.Option("estagio", "--nivel"),
+) -> None:
+    """Calcula a nota de compatibilidade com ATS e mostra o que mudou (RF-CV-05)."""
+    from .analise.ats import calcular_nota, comparar, registrar_nota
+    from .analise.termos import extrair_termos
+
+    perfil = carregar_perfil()
+    conjunto = conjunto_de_analise(carregar_vagas(), foco=foco, limite=limite)
+    termos = extrair_termos(conjunto)
+    nota = calcular_nota(perfil, termos, foco=foco, nivel=nivel)
+    anterior = registrar_nota(nota)
+
+    tabela = Table(title=f"Nota ATS: {nota.total}/100" + (f" — foco {foco}" if foco else ""))
+    tabela.add_column("Critério", overflow="fold")
+    tabela.add_column("Pontos")
+    tabela.add_column("Detalhe", overflow="fold")
+    for item in nota.itens:
+        tabela.add_row(item.criterio, f"{item.pontos}/{item.maximo}", item.detalhe or "")
+    console.print(tabela)
+
+    if anterior:
+        console.print("[bold]O que mudou desde a última revisão:[/bold]")
+        mudancas = comparar(anterior, nota)
+        if len(mudancas) == 1:
+            console.print(f"  • {mudancas[0]} — demais critérios sem mudança")
+        else:
+            for m in mudancas:
+                console.print(f"  • {m}")
+    else:
+        console.print("[dim]Primeira revisão registrada; as próximas mostrarão o que mudou.[/dim]")
+
+
+@cv_app.command("fechar-lacunas")
+def cv_fechar_lacunas(
+    foco: str | None = typer.Option(None, "--foco"),
+    limite: int = typer.Option(30, "--limite"),
+) -> None:
+    """Sugere curso, certificação ou projeto para cada lacuna sem lastro (RF-CV-06)."""
+    from .analise.fechamento import sugerir_fechamento
+    from .analise.lacunas import gerar_relatorio
+    from .analise.termos import extrair_termos
+
+    perfil = carregar_perfil()
+    conjunto = _conjunto_ou_sai(foco, limite)
+    relatorio = gerar_relatorio(perfil, extrair_termos(conjunto))
+    if not relatorio.nao_tem:
+        console.print("[green]Nenhuma lacuna sem lastro: todos os termos das vagas têm base no perfil.[/green]")
+        return
+
+    console.print(
+        f"[bold]Como fechar de verdade as {len(relatorio.nao_tem)} lacuna(s)[/bold] "
+        "[dim](nunca inventar no CV — RN-02)[/dim]"
+    )
+    sugestoes = sugerir_fechamento(relatorio.nao_tem)
+    termo_atual = None
+    for s in sugestoes:
+        if s.termo != termo_atual:
+            termo_atual = s.termo
+            peso = next((i for i in relatorio.nao_tem if i.termo == s.termo), None)
+            info = f" — pedido em {peso.vagas_em_que_aparece} vaga(s) ({peso.percentual}%)" if peso else ""
+            console.print(f"\n[bold red]{s.termo}[/bold red]{info}")
+        rotulo = {"curso": "Curso", "certificacao": "Certificação", "projeto": "Projeto"}[s.tipo]
+        origem = f" [{s.catalogo}]" if s.catalogo else ""
+        console.print(f"  • {rotulo}{origem}: {s.descricao}")
 
 
 @cv_app.command("reescrever")
