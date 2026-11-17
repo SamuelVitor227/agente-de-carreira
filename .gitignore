@@ -7,18 +7,22 @@ desktop.ini
 .vscode/
 .idea/
 
-# Segredos e dados pessoais
+# Segredos e dados pessoais (o perfil-mestre fica em data/ e nunca vai ao git)
 .env
 .env.*
 *.local
 dados-pessoais/
 curriculos/
+data/
 
-# Python (caso a construção B em Python seja escolhida)
+# Python
 __pycache__/
 *.py[cod]
 .venv/
 venv/
+.pytest_cache/
+*.egg-info/
+dist/
 
 # .NET (caso a construção B em .NET seja escolhida)
 bin/
