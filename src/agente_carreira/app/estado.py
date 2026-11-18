@@ -120,8 +120,9 @@ def montar_inicio(dados=None) -> Inicio:
     tem_perfil = perfil_existe()
     config = carregar_config()
     aplicadas = {c.vaga_id for c in dados.candidaturas.itens if foi_aplicada(c)}
-    boas = [v for v in dados.base.itens if v.status in ("nova", "no_resumo", "salva") and v.nota >= config.limiar_alerta
-            and not v.risco and v.id not in aplicadas]
+    # "Boas" = valem a candidatura (o limiar de alerta, 80, é para avisar na hora e quase nunca é atingido).
+    boas = [v for v in dados.base.itens if v.status in ("nova", "no_resumo", "salva")
+            and v.nota >= config.limiar_candidatar and not v.risco and v.id not in aplicadas]
     numeros = {
         "vagas_boas": len(boas),
         "em_andamento": sum(1 for c in dados.candidaturas.itens if foi_aplicada(c) and not c.encerrada),
@@ -129,14 +130,17 @@ def montar_inicio(dados=None) -> Inicio:
         "aprovacoes": len(dados.fila),
         "parados": sum(1 for a in dados.saude.adaptadores.values() if a.status == "parado"),
     }
+    from ..configuracao import carregar_configuracao
     from ..operacao.credenciais import email_configurado
     from ..radar.agenda import tarefa_agendada
 
     agendada = tarefa_agendada()
+    # O e-mail pode ser lido por IMAP ou pelo Outlook na web, no navegador do agente: os dois contam.
+    tem_email = bool(email_configurado()) or carregar_configuracao().email_navegador.ativo
     passos = primeiros_passos(tem_perfil=tem_perfil, tem_linkedin=bool(carregar_estado().campos),
                               tem_busca=bool(config.buscas),
                               tem_vagas=bool(dados.base.itens) or dados.base.ultima_rodada is not None,
-                              tem_email=bool(email_configurado()), tem_agendamento=agendada is not False)
+                              tem_email=tem_email, tem_agendamento=agendada is not False)
     nome = dados.perfil.contato.nome.split()[0] if dados.perfil and dados.perfil.contato.nome else None
     from ..operacao.agendada import situacao
 
@@ -156,23 +160,133 @@ class LinhaVaga:
     local: str
     situacao: str
     alerta: bool
+    estimada: bool = False           # sem descrição: nota só pelo título
+    modelo: str = ""                 # remoto, hibrido, presencial
+    nivel: str = ""                  # estagio, trainee, junior...
+    encontrada: datetime | None = None
+    avisos: list[str] = field(default_factory=list)
+
+    @property
+    def nota_texto(self) -> str:
+        return f"≈{self.nota}" if self.estimada else str(self.nota)
 
 
-def linhas_vagas(base, candidaturas, filtro: str = "recomendadas") -> list[LinhaVaga]:
+ABAS_VAGAS = (("recomendadas", "Recomendadas"), ("outras", "Outras"), ("salvas", "Salvas"), ("todas", "Todas"))
+MODELOS_VAGA = {"remoto": "Remoto", "hibrido": "Híbrido", "presencial": "Presencial"}
+NIVEIS_VAGA = {"estagio": "Estágio", "trainee": "Trainee", "junior": "Júnior"}
+
+
+def linhas_vagas(base, candidaturas, filtro: str = "recomendadas", limiar: int = 50) -> list[LinhaVaga]:
+    """As vagas de cada aba. "Recomendadas" tem nota a partir de `limiar` (o de salvar); "Outras", as abaixo."""
     from ..relatorios import foi_aplicada
 
     aplicadas = {c.vaga_id for c in candidaturas.itens if foi_aplicada(c)}
     linhas = []
     for v in base.itens:
-        if filtro == "recomendadas" and (v.status not in ("nova", "no_resumo", "salva") or v.risco or v.id in aplicadas):
+        ativa = v.status in ("nova", "no_resumo", "salva") and not v.risco and v.id not in aplicadas
+        if filtro == "recomendadas" and not (ativa and v.nota >= limiar):
+            continue
+        if filtro == "outras" and not (ativa and v.nota < limiar):
             continue
         if filtro == "salvas" and v.status != "salva":
             continue
         situacao = "Já me candidatei" if v.id in aplicadas else SITUACAO_VAGA.get(v.status, v.status)
         if v.risco:
             situacao = "Suspeita de golpe"
-        linhas.append(LinhaVaga(v.id, v.nota, v.titulo, v.empresa or "—", v.local or "—", situacao, v.risco))
+        linhas.append(LinhaVaga(
+            v.id, v.nota, v.titulo, v.empresa or "—", v.local or "—", situacao, v.risco,
+            estimada=bool(v.aderencia and v.aderencia.estimada), modelo=v.modelo or "", nivel=v.nivel or "",
+            encontrada=v.primeira_coleta, avisos=[s.mensagem for s in v.sinais if s.gravidade != "forte"],
+        ))
     return sorted(linhas, key=lambda l: (-l.nota, l.titulo))
+
+
+CONTRATOS_VAGA = {"clt": "CLT", "pj": "PJ", "estagio": "Estágio"}
+
+
+def _dinheiro(valor: float) -> str:
+    return f"R$ {valor:,.0f}".replace(",", ".")
+
+
+def resumo_da_vaga(vaga) -> str:
+    """'Empresa · Local · Presencial · Estágio · R$ 1.297 · encontrada hoje' (sem repetir nível e contrato)."""
+    nivel = NIVEIS_VAGA.get(vaga.nivel or "", vaga.nivel)
+    contrato = CONTRATOS_VAGA.get(vaga.contrato or "", vaga.contrato)
+    salario = None
+    if vaga.salario_min:
+        salario = _dinheiro(vaga.salario_min)
+        if vaga.salario_max and vaga.salario_max != vaga.salario_min:
+            salario += f" a {_dinheiro(vaga.salario_max)}"
+    partes = [vaga.empresa, vaga.local, MODELOS_VAGA.get(vaga.modelo or ""), nivel,
+              contrato if contrato != nivel else None, salario, f"encontrada {quando_encontrada(vaga.primeira_coleta)}"]
+    return " · ".join(p for p in partes if p)
+
+
+def frase_da_nota(nota: int, estimada: bool, limiar_candidatar: int, limiar_salvar: int) -> str:
+    if estimada:
+        return "estimada só pelo título: o agente ainda não leu a descrição"
+    if nota >= limiar_candidatar:
+        return "combina bem: vale a candidatura"
+    if nota >= limiar_salvar:
+        return "combina em parte: vale olhar"
+    return "combina pouco com o seu perfil"
+
+
+def explicar_nota(aderencia) -> list[str]:
+    """A nota em linguagem simples: o que você tem, o que falta e se o cargo combina."""
+    if aderencia is None:
+        return ["O agente ainda não deu nota a esta vaga."]
+    linhas = []
+    if aderencia.atendidos:
+        linhas.append("Você tem: " + ", ".join(aderencia.atendidos[:8]) + ("…" if len(aderencia.atendidos) > 8 else ""))
+    if aderencia.lacunas:
+        linhas.append("Pede e não está no seu perfil: " + ", ".join(aderencia.lacunas[:8])
+                      + ("…" if len(aderencia.lacunas) > 8 else ""))
+    if aderencia.faltam_no_cv:
+        linhas.append("Você tem, mas não aparece no currículo: " + ", ".join(aderencia.faltam_no_cv[:6]))
+    if not aderencia.atendidos and not aderencia.lacunas and not aderencia.estimada:
+        linhas.append("O anúncio não cita tecnologias que o agente conheça.")
+    if aderencia.encaixe_cargo is not None:
+        linhas.append("O cargo e o nível combinam com as suas buscas." if aderencia.encaixe_cargo >= 0.8 else
+                      "O cargo e o nível combinam em parte com as suas buscas." if aderencia.encaixe_cargo >= 0.5 else
+                      "O cargo e o nível são pouco parecidos com as suas buscas.")
+    if "inglês" in (aderencia.justificativa or ""):
+        linhas.append("O anúncio é em inglês e o seu inglês está como básico.")
+    if aderencia.ajuste_feedback:
+        linhas.append(f"Ajuste pelo que você já disse de outras vagas: {aderencia.ajuste_feedback * 100:+.0f} pontos.")
+    return linhas
+
+
+def quando_encontrada(momento: datetime | None, agora: datetime | None = None) -> str:
+    if momento is None:
+        return "—"
+    agora = agora or datetime.now(timezone.utc)
+    dias = (_utc(agora).astimezone().date() - _utc(momento).astimezone().date()).days
+    return "hoje" if dias <= 0 else "ontem" if dias == 1 else f"há {dias} dias"
+
+
+def filtrar_linhas(linhas: list[LinhaVaga], texto: str = "", modelo: str = "", nivel: str = "") -> list[LinhaVaga]:
+    """Campo "Procurar" (todas as palavras em título, empresa ou local) e os filtros de modelo e nível."""
+    from ..radar.texto import norm
+
+    palavras = norm(texto).split()
+    saida = []
+    for l in linhas:
+        alvo = norm(f"{l.titulo} {l.empresa} {l.local}")
+        if all(p in alvo for p in palavras) and (not modelo or l.modelo == modelo) and (not nivel or l.nivel == nivel):
+            saida.append(l)
+    return saida
+
+
+def ordenar_linhas(linhas: list[LinhaVaga], coluna: str = "nota", decrescente: bool = True) -> list[LinhaVaga]:
+    from ..radar.texto import norm
+
+    chaves = {
+        "nota": lambda l: l.nota,
+        "encontrada": lambda l: _utc(l.encontrada) if l.encontrada else datetime.min.replace(tzinfo=timezone.utc),
+    }
+    chave = chaves.get(coluna, lambda l: norm(str(getattr(l, coluna, ""))))
+    return sorted(linhas, key=chave, reverse=decrescente)
 
 
 @dataclass

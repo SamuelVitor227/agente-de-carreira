@@ -114,6 +114,35 @@ def eh_estagio(vaga: VagaEncontrada) -> bool:
     return vaga.nivel == "estagio" or vaga.contrato == "estagio"
 
 
+# ---------------------------------------------------------------- vagas exclusivas ou afirmativas
+
+# O texto chega sem acentos e em minúsculas (norm): "às" vira "as".
+_EXCLUSIVA = r"(?:exclusiv[ao]s?|afirmativ[ao]s?|somente|apenas|destinad[ao]s?|reservad[ao]s?)\s+(?:para|a|as|aos)\s+"
+PUBLICOS_EXCLUSIVOS = [
+    ("pcd", "pessoas com deficiência (PcD)",
+     re.compile(_EXCLUSIVA + r"(?:pessoas?\s+com\s+deficiencia|pcds?)\b|\bvagas?\s+(?:para\s+)?pcds?\b")),
+    ("mulheres", "mulheres", re.compile(_EXCLUSIVA + r"(?:pessoas\s+que\s+se\s+identificam\s+como\s+)?mulheres\b")),
+    ("pessoas-negras", "pessoas negras", re.compile(_EXCLUSIVA + r"(?:pessoas\s+)?(?:negras|pretas)\b")),
+    ("50-mais", "pessoas com 50 anos ou mais", re.compile(_EXCLUSIVA + r"(?:pessoas\s+)?(?:50\s*\+|acima\s+de\s+50)")),
+    ("lgbt", "pessoas LGBTQIAPN+", re.compile(_EXCLUSIVA + r"(?:pessoas\s+)?(?:lgbt\w*|trans)\b")),
+]
+
+
+def sinais_exclusiva(vaga: VagaEncontrada) -> list[Sinal]:
+    """Anúncio exclusivo ou afirmativo (ex.: "Desenvolvedor .NET - PcD"): só um aviso, para você decidir.
+
+    O agente não guarda nada sobre você a esse respeito: ele só mostra o que o anúncio diz.
+    """
+    titulo, descricao = norm(vaga.titulo), norm(vaga.descricao)
+    sinais = []
+    for tipo, publico, padrao in PUBLICOS_EXCLUSIVOS:
+        no_titulo = tipo == "pcd" and re.search(r"\bpcds?\b", titulo)
+        if no_titulo or padrao.search(titulo) or padrao.search(descricao):
+            sinais.append(Sinal(tipo=f"exclusiva:{tipo}", gravidade="atencao",
+                                mensagem=f"anúncio exclusivo ou afirmativo para {publico}: confira se a vaga é para você"))
+    return sinais
+
+
 def sinais_estagio(vaga: VagaEncontrada) -> list[Sinal]:
     if not eh_estagio(vaga):
         return []

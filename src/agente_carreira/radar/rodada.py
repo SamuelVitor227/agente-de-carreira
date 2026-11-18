@@ -37,7 +37,8 @@ from .coleta import (
 )
 from .dedup import incorporar, mesclar
 from .extracao import analisar_html, extrair_campos, jobpostings
-from .filtros import PADRAO_ENCERRADA, avaliar_filtros, motivo_expiracao, sinais_estagio, sinais_risco
+from .filtros import (PADRAO_ENCERRADA, avaliar_filtros, motivo_expiracao, sinais_estagio, sinais_exclusiva,
+                      sinais_risco)
 from .modelos import BaseVagas, ConfigVagas, Fonte, RegistroRodada, VagaBruta, VagaEncontrada
 from .resumo import (
     Resumo,
@@ -273,7 +274,7 @@ def avaliar(
     vaga: VagaEncontrada, perfil: PerfilMestre, config: ConfigVagas, indice: IndiceTFIDF,
     vetor_perfil: dict[str, float], hoje: date,
 ) -> None:
-    vaga.sinais = sinais_risco(vaga) + sinais_estagio(vaga)
+    vaga.sinais = sinais_risco(vaga) + sinais_estagio(vaga) + sinais_exclusiva(vaga)
     busca, motivos = avaliar_filtros(vaga, config, perfil, hoje)
     vaga.busca = busca
     vaga.motivos_eliminacao = motivos

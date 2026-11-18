@@ -375,7 +375,7 @@ def _tabela_resumo(itens) -> None:
         tabela.add_column(col, overflow="fold")
     for i in itens:
         cor = "green" if i.acao == "candidatar" else "yellow" if i.acao == "salvar" else "dim"
-        tabela.add_row(i.id, str(i.nota), f"[{cor}]{i.acao}[/{cor}]", Text(i.titulo), Text(i.empresa or "?"),
+        tabela.add_row(i.id, i.nota_texto, f"[{cor}]{i.acao}[/{cor}]", Text(i.titulo), Text(i.empresa or "?"),
                        Text(" · ".join(p for p in [i.local, i.modelo] if p)))
     console.print(tabela)
 
@@ -592,23 +592,18 @@ def vagas_feedback(
     motivo: str | None = typer.Option(None, "--motivo", help="area, requisitos, nivel, modelo, local, salario, empresa ou outro."),
 ) -> None:
     """Registra se a vaga interessa e por quê; o agente ajusta pesos e sugere filtros (RF-VG-11)."""
-    from .radar.aderencia import MOTIVOS_FEEDBACK, aplicar_feedback, aplicar_sugestao
-    from .radar.modelos import Feedback
+    from .radar.acoes import aceitar_sugestoes, registrar_feedback
 
-    if motivo and motivo not in MOTIVOS_FEEDBACK:
-        console.print(f"[red]Motivo inválido: {escape(motivo)}. Use: {', '.join(MOTIVOS_FEEDBACK)}.[/red]")
+    try:
+        sugestoes = registrar_feedback(id_, interessa, motivo)
+    except ValueError as erro:
+        console.print(f"[red]{escape(str(erro))}[/red]")
         raise typer.Exit(1)
-    base, config = carregar_base(), carregar_config()
-    vaga = _vaga(base, id_)
-    vaga.feedback = Feedback(interessa=interessa, motivo=motivo)
-    sugestoes = aplicar_feedback(config, vaga, interessa, motivo)
-    console.print(f"[green]Feedback registrado.[/green] Pesos ajustados para as próximas rodadas.")
-    for sugestao in sugestoes:
-        if typer.confirm(f"Ajustar o filtro: {sugestao.descricao}?", default=False):
-            aplicar_sugestao(config, sugestao)
-            console.print(f"[green]Filtro ajustado: {escape(sugestao.descricao)}.[/green]")
-    salvar_config(config)
-    salvar_base(base)
+    console.print("[green]Feedback registrado.[/green] Pesos ajustados para as próximas rodadas.")
+    aceitas = [s for s in sugestoes if typer.confirm(f"Ajustar o filtro: {s.descricao}?", default=False)]
+    aceitar_sugestoes(aceitas)
+    for sugestao in aceitas:
+        console.print(f"[green]Filtro ajustado: {escape(sugestao.descricao)}.[/green]")
 
 
 @vagas_app.command("salvar")
@@ -617,31 +612,23 @@ def vagas_salvar(
     foco: str | None = typer.Option(None, "--foco", help="Foco da vaga-alvo; padrão: a busca da vaga, se for um foco."),
 ) -> None:
     """Salva a vaga: entra nas vagas-alvo que alimentam a otimização do CV (RF-CV-01)."""
-    from .vagas import Vaga, carregar_vagas, salvar_vagas
+    from .radar.acoes import FocoNecessario, salvar_vaga
 
-    base = carregar_base()
-    vaga = _vaga(base, id_)
-    foco_final = foco or (vaga.busca if vaga.busca in SINONIMOS_POR_FOCO else None)
-    if not foco_final:
-        foco_final = typer.prompt(f"Foco da vaga-alvo ({', '.join(SINONIMOS_POR_FOCO)})")
-    alvo = carregar_vagas()
-    alvo.vagas.append(Vaga(
-        titulo=vaga.titulo, empresa=vaga.empresa, foco=foco_final, url=vaga.link,
-        fonte=", ".join(f.origem for f in vaga.fontes), descricao=vaga.descricao or vaga.titulo,
-    ))
-    salvar_vagas(alvo)
-    vaga.status = "salva"
-    salvar_base(base)
+    _vaga(carregar_base(), id_)  # vaga inexistente: mensagem clara
+    try:
+        foco_final = salvar_vaga(id_, foco)
+    except FocoNecessario:
+        foco_final = salvar_vaga(id_, typer.prompt(f"Foco da vaga-alvo ({', '.join(SINONIMOS_POR_FOCO)})"))
     console.print(f"[green]Vaga salva e adicionada às vagas-alvo (foco {escape(foco_final)}).[/green]")
 
 
 @vagas_app.command("descartar")
 def vagas_descartar(id_: str = typer.Argument(..., metavar="ID")) -> None:
     """Descarta a vaga (some dos próximos resumos)."""
-    base = carregar_base()
-    vaga = _vaga(base, id_)
-    vaga.status = "descartada"
-    salvar_base(base)
+    from .radar.acoes import descartar_vaga
+
+    _vaga(carregar_base(), id_)  # vaga inexistente: mensagem clara
+    descartar_vaga(id_)
     console.print("[green]Vaga descartada.[/green] Dica: 'agente vagas feedback ID --nao-interessa --motivo ...' ensina o agente.")
 
 

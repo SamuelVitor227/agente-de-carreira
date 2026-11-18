@@ -445,9 +445,73 @@ def test_aderencia_sem_descricao_e_reduzida_e_nao_manda_candidatar():
     vaga = _vaga(descricao="")
     vaga.aderencia = _aderencia(_perfil(), vaga, config)
     assert "estimada só pelo título" in vaga.aderencia.justificativa
-    assert vaga.nota <= 75 < config.limiar_alerta            # só o título não dispara alerta
+    assert vaga.aderencia.estimada and vaga.nota <= 65 < config.limiar_alerta  # só o título não dispara alerta
     config.limiar_candidatar = 10
     assert acao_sugerida(vaga, config) == "salvar"
+
+
+def test_vaga_de_estagio_sem_descricao_nao_vira_nota_zero():
+    """Sem a descrição, a nota vem do título e do nível: um estágio em TI fica no meio, como estimativa."""
+    perfil, config = _perfil(), _config()
+    estagio = _vaga(titulo="Estagiário em TI", descricao="")
+    a = _aderencia(perfil, estagio, config)
+    assert a.estimada and 40 <= a.nota <= 65
+
+
+def test_uma_tecnologia_reconhecida_nao_basta_para_nota_alta():
+    """Antes, 'SQL' sozinho entre requisitos que o agente não conhecia dava 100% de cobertura."""
+    perfil, config = _perfil(competencias_tecnicas=["C#", ".NET", "Python", "Git", "SQL", "MySQL"]), _config()
+    sap = _vaga(titulo="Consultor SAP Analytics Cloud Júnior", nivel="junior",
+                descricao="Requisitos: SAP Analytics Cloud, SAP BW, modelagem de planejamento e SQL.",
+                requisitos_obrigatorios=["SAP Analytics Cloud", "SAP BW", "SQL"])
+    dotnet = _vaga(titulo="Desenvolvedor .NET Júnior", nivel="junior",
+                   descricao="Requisitos: C#, .NET, MySQL, Git e APIs REST. Desejável: Docker.",
+                   requisitos_obrigatorios=["C#, .NET, MySQL, Git"], requisitos_desejaveis=["Docker"])
+    a_sap, a_dotnet = _aderencia(perfil, sap, config), _aderencia(perfil, dotnet, config)
+    assert "SAP" in a_sap.lacunas                     # o agente agora reconhece o que você não tem
+    assert a_sap.cobertura < 0.75 and a_sap.nota < a_dotnet.nota
+
+
+def test_anuncio_em_ingles_com_ingles_basico_desce_a_nota():
+    config = _config()
+    vaga_pt = _vaga(titulo="Desenvolvedor C# Júnior", descricao="Requisitos: C#, .NET e Git.", idioma="pt")
+    vaga_en = _vaga(titulo="Desenvolvedor C# Júnior", descricao="Requisitos: C#, .NET e Git.", idioma="en")
+    basico = _perfil(idiomas=[Idioma(idioma="Inglês", nivel="básico")])
+    fluente = _perfil(idiomas=[Idioma(idioma="Inglês", nivel="fluente")])
+    assert _aderencia(basico, vaga_en, config).nota < _aderencia(basico, vaga_pt, config).nota
+    assert "inglês" in _aderencia(basico, vaga_en, config).justificativa
+    assert _aderencia(fluente, vaga_en, config).nota == _aderencia(fluente, vaga_pt, config).nota
+
+
+@pytest.mark.parametrize("titulo, descricao, tipo", [
+    ("Desenvolvedor .Net - PcD | Maxpar", "", "exclusiva:pcd"),
+    ("Estágio em TI", "Esta é uma vaga exclusiva para pessoas com deficiência.", "exclusiva:pcd"),
+    ("Desenvolvedora Júnior", "Vaga afirmativa para mulheres na tecnologia.", "exclusiva:mulheres"),
+    ("Analista de Dados", "Processo destinado às pessoas negras.", "exclusiva:pessoas-negras"),
+])
+def test_vaga_exclusiva_vira_aviso_sem_eliminar(titulo, descricao, tipo):
+    from agente_carreira.radar.filtros import sinais_exclusiva
+
+    vaga = _vaga(titulo=titulo, descricao=descricao)
+    vaga.sinais = sinais_exclusiva(vaga)
+    assert [s.tipo for s in vaga.sinais] == [tipo]
+    assert not vaga.risco  # só um aviso: você decide
+
+
+def test_convite_a_diversidade_nao_e_vaga_exclusiva():
+    from agente_carreira.radar.filtros import sinais_exclusiva
+
+    texto = "Incentivamos mulheres, pessoas negras, PcD e LGBTQIAPN+ a se candidatarem. Vaga também para PcD."
+    assert sinais_exclusiva(_vaga(titulo="Desenvolvedor C#", descricao=texto)) == []
+
+
+def test_encaixe_do_cargo_e_do_nivel():
+    from agente_carreira.radar.aderencia import encaixe_cargo
+
+    config = _config()
+    assert encaixe_cargo(_vaga(titulo="Desenvolvedor .NET", nivel="junior"), config) == 1.0
+    assert encaixe_cargo(_vaga(titulo="Desenvolvedor .NET"), config) == 0.8           # nível não informado
+    assert encaixe_cargo(_vaga(titulo="Analista Financeiro", nivel="junior"), config) < 0.6
 
 
 # ---------------------------------------------------------------- RF-VG-11

@@ -355,3 +355,68 @@ def test_saida_vai_para_o_log_quando_o_app_fecha(tmp_path, monkeypatch):
     assert not saida.escrever("\x1ePERGUNTA {}\n", controle=True)  # pergunta sem ninguém para responder
     log = (tmp_path / "app" / LOG_SEGUNDO_PLANO).read_text(encoding="utf-8")
     assert "agente vagas rodada" in log and "Buscando vagas…" in log and "\x1b" not in log
+
+
+# ---------------------------------------------------------------- tela de vagas
+
+def _base_para_tela():
+    from agente_carreira.radar.modelos import Aderencia, BaseVagas, VagaEncontrada
+
+    agora = datetime.now(timezone.utc)
+    return BaseVagas(itens=[
+        VagaEncontrada(id="a", titulo="Desenvolvedor .NET Júnior", empresa="Omega", local="Belo Horizonte, MG",
+                       modelo="hibrido", nivel="junior", status="no_resumo", primeira_coleta=agora,
+                       aderencia=Aderencia(nota=74, atendidos=["C#", ".NET"], lacunas=["Docker"], encaixe_cargo=1.0)),
+        VagaEncontrada(id="b", titulo="Estagiário em TI", empresa="Beta", local="Contagem, MG", nivel="estagio",
+                       status="no_resumo", primeira_coleta=agora - timedelta(days=3),
+                       aderencia=Aderencia(nota=52, estimada=True)),
+        VagaEncontrada(id="c", titulo="Analista de Suporte", empresa="Gama", local="Remoto", modelo="remoto",
+                       status="no_resumo", aderencia=Aderencia(nota=30)),
+    ])
+
+
+def test_abas_separam_recomendadas_e_outras_pela_nota():
+    base, cands = _base_para_tela(), Candidaturas()
+    assert [l.id for l in estado.linhas_vagas(base, cands, "recomendadas", 50)] == ["a", "b"]
+    assert [l.id for l in estado.linhas_vagas(base, cands, "outras", 50)] == ["c"]
+    estimada = estado.linhas_vagas(base, cands, "recomendadas", 50)[1]
+    assert estimada.nota_texto == "≈52"
+
+
+def test_procurar_filtrar_e_ordenar():
+    linhas = estado.linhas_vagas(_base_para_tela(), Candidaturas(), "todas")
+    assert [l.id for l in estado.filtrar_linhas(linhas, "net omega")] == ["a"]
+    assert [l.id for l in estado.filtrar_linhas(linhas, "contagem")] == ["b"]   # procura também no local
+    assert [l.id for l in estado.filtrar_linhas(linhas, modelo="remoto")] == ["c"]
+    assert [l.id for l in estado.filtrar_linhas(linhas, nivel="estagio")] == ["b"]
+    assert [l.id for l in estado.ordenar_linhas(linhas, "empresa", False)] == ["b", "c", "a"]
+    assert [l.id for l in estado.ordenar_linhas(linhas, "encontrada", True)][-1] == "b"   # a mais antiga por último
+
+
+def test_quando_foi_encontrada_e_nota_explicada():
+    agora = datetime(2026, 11, 18, 15, 0, tzinfo=timezone.utc)
+    assert estado.quando_encontrada(agora, agora) == "hoje"
+    assert estado.quando_encontrada(agora - timedelta(days=1), agora) == "ontem"
+    assert estado.quando_encontrada(agora - timedelta(days=5), agora) == "há 5 dias"
+    vaga = _base_para_tela().buscar("a")
+    explicacao = estado.explicar_nota(vaga.aderencia)
+    assert explicacao[0] == "Você tem: C#, .NET" and "Pede e não está no seu perfil: Docker" in explicacao
+    assert "O cargo e o nível combinam com as suas buscas." in explicacao
+    assert estado.resumo_da_vaga(vaga).startswith("Omega · Belo Horizonte, MG · Híbrido · Júnior · encontrada")
+
+
+def test_acoes_rapidas_salvam_e_descartam_sem_janela():
+    from agente_carreira.radar.acoes import FocoNecessario, registrar_feedback, salvar_vaga
+    from agente_carreira.radar.modelos import carregar_base, salvar_base
+    from agente_carreira.vagas import carregar_vagas
+
+    salvar_base(_base_para_tela())
+    with pytest.raises(FocoNecessario):
+        salvar_vaga("a")                                  # a vaga não diz a área
+    assert salvar_vaga("a", "backend-dotnet") == "backend-dotnet"
+    salvar_vaga("a", "backend-dotnet")                     # salvar de novo não duplica a vaga-alvo
+    assert carregar_base().buscar("a").status == "salva" and len(carregar_vagas().vagas) == 1
+    registrar_feedback("c", False, "area", descartar=True)
+    c = carregar_base().buscar("c")
+    assert c.status == "descartada" and c.feedback.motivo == "area"
+    assert [l.id for l in estado.linhas_vagas(carregar_base(), Candidaturas(), "outras")] == []

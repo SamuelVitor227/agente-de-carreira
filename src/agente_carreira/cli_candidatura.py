@@ -597,14 +597,10 @@ def funil_lembretes(todos: bool = typer.Option(False, "--todos", help="Inclui os
 @funil_app.command("feito")
 def funil_feito(id_: str = typer.Argument(..., metavar="ID_DO_LEMBRETE")) -> None:
     """Marca um lembrete como feito."""
-    from .funil import carregar_lembretes, salvar_lembretes
+    from .funil import marcar_lembrete_feito
 
-    lembretes = carregar_lembretes()
-    alvo = next((l for l in lembretes.itens if l.id == id_), None)
-    if alvo is None:
+    if not marcar_lembrete_feito(id_):
         _sair(f"Lembrete {id_} não existe.")
-    alvo.feito = True
-    salvar_lembretes(lembretes)
     console.print("[green]Lembrete marcado como feito.[/green]")
 
 

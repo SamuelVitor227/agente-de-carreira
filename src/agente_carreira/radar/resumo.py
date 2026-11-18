@@ -36,6 +36,11 @@ class ItemResumo(BaseModel):
     alerta: bool = False
     justificativa_ia: str | None = None
     autoria_justificativa: str | None = None  # RF-IA-06
+    estimada: bool = False                    # nota só pelo título (sem descrição)
+
+    @property
+    def nota_texto(self) -> str:
+        return f"≈{self.nota}" if self.estimada else str(self.nota)
 
 
 class Resumo(BaseModel):
@@ -70,6 +75,7 @@ def item_resumo(vaga: VagaEncontrada, config: ConfigVagas) -> ItemResumo:
         alerta=not vaga.risco and vaga.nota >= config.limiar_alerta,
         justificativa_ia=vaga.justificativa_ia,
         autoria_justificativa=autoria(vaga.motor_justificativa) if vaga.justificativa_ia else None,
+        estimada=bool(vaga.aderencia and vaga.aderencia.estimada),
     )
 
 
@@ -108,22 +114,26 @@ def _linha_local(item: ItemResumo) -> str:
 def resumo_markdown(resumo: Resumo, config: ConfigVagas) -> str:
     alertas = sum(1 for i in resumo.itens if i.alerta)
     eliminadas = sum(resumo.eliminadas.values())
+    # As de nota baixa vão para uma lista curta no fim: o resumo fica com o que vale a pena olhar.
+    principais = [i for i in resumo.itens if i.acao != "descartar" or i.justificativa_ia]
+    outras = [i for i in resumo.itens if i not in principais]
     linhas = [
         f"# Resumo de vagas — {resumo.data:%d/%m/%Y}",
         "",
-        f"{resumo.coletadas} coletadas · {len(resumo.itens)} novas recomendáveis · {alertas} acima de "
-        f"{config.limiar_alerta} · {eliminadas} motivo(s) de eliminação · {len(resumo.risco)} com indícios de risco · "
-        f"{resumo.expiradas} expirada(s)",
+        f"{resumo.coletadas} coletadas · {len(principais)} recomendáveis · {len(outras)} com nota baixa · {alertas} "
+        f"acima de {config.limiar_alerta} · {eliminadas} motivo(s) de eliminação · {len(resumo.risco)} com indícios de "
+        f"risco · {resumo.expiradas} expirada(s)",
         "",
         "## Vagas novas por aderência",
         "",
     ]
-    if not resumo.itens:
+    if not principais:
         linhas += ["Nenhuma vaga nova recomendável hoje.", ""]
-    for n, item in enumerate(resumo.itens, 1):
+    for n, item in enumerate(principais, 1):
         destaque = " — acima do limiar de alerta" if item.alerta else ""
+        estimada = " (estimada só pelo título)" if item.estimada else ""
         linhas += [
-            f"### {n}. {item.titulo} — {item.empresa or 'empresa não informada'} ({item.nota}){destaque}",
+            f"### {n}. {item.titulo} — {item.empresa or 'empresa não informada'} ({item.nota_texto}){estimada}{destaque}",
             f"- **Ação sugerida:** {item.acao}",
             f"- **Local:** {_linha_local(item)}",
             f"- **Motivo ({autoria(None)}):** {item.motivo}",
@@ -133,6 +143,12 @@ def resumo_markdown(resumo: Resumo, config: ConfigVagas) -> str:
             f"- **ID:** {item.id}",
         ]
         linhas += [f"- **Atenção:** {aviso}" for aviso in item.avisos]
+        linhas.append("")
+    if outras:
+        linhas += [f"## Outras {len(outras)} vaga(s), com nota baixa", "",
+                   "Combinam pouco com o seu perfil. Ficam no app, na aba \"Outras\".", ""]
+        linhas += [f"- {item.titulo} — {item.empresa or 'empresa não informada'} ({item.nota_texto}) · "
+                   f"{item.link or 'sem link'}" for item in outras]
         linhas.append("")
     if resumo.risco:
         linhas += ["## Com indícios de golpe ou risco (não recomendadas — RN-12)", ""]

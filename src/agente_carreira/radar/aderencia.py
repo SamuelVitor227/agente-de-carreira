@@ -1,8 +1,15 @@
 """Aderência da vaga ao perfil, de 0 a 100, com justificativa (RF-VG-06), e aprendizado (RF-VG-11).
 
-Motor local, sem IA externa: cobertura das tecnologias pedidas (obrigatórias
-pesam o dobro das desejáveis) combinada com a similaridade TF-IDF entre o
-texto da vaga e o perfil-mestre, mais um ajuste aprendido com o seu feedback.
+Motor local, sem IA externa. A nota junta três partes:
+
+- cobertura das tecnologias pedidas (obrigatórias pesam o dobro das desejáveis). Com pouca evidência ela
+  fica perto do meio: uma vaga que só cita "SQL" não vira 100% compatível por isso;
+- similaridade TF-IDF entre o texto da vaga e o perfil-mestre;
+- encaixe do cargo e do nível com as suas buscas (estágio/júnior em desenvolvimento, por exemplo).
+
+Depois entram o ajuste aprendido com o seu feedback e um desconto para anúncio em inglês quando o seu
+inglês é básico. Sem a descrição, a nota é estimada só pelo título: aparece como "≈ 50", tem teto e
+não dispara alerta nem "candidatar".
 """
 
 from __future__ import annotations
@@ -16,13 +23,19 @@ from pydantic import BaseModel
 
 from ..analise.lacunas import gerar_relatorio
 from ..analise.termos import TermoFrequente
-from ..importadores.extrator import TECNOLOGIAS_CONHECIDAS
 from ..models import PerfilMestre
 from .modelos import Aderencia, ConfigVagas, VagaEncontrada
+from .tecnologias import TECNOLOGIAS_VAGAS
 from .texto import norm, slug, tokens
 
-SIMILARIDADE_REFERENCIA = 0.35  # similaridade TF-IDF considerada "muito parecida"
-FATOR_SEM_DESCRICAO = 0.75      # só o título não basta para alerta nem para "candidatar"
+# Similaridade TF-IDF considerada "muito parecida". Calibrada com vagas reais: um anúncio longo raramente
+# passa de 0,12 contra o perfil, mesmo quando combina muito.
+SIMILARIDADE_REFERENCIA = 0.12
+NOTA_MAXIMA_ESTIMADA = 65       # só o título não basta para alerta nem para "candidatar"
+EVIDENCIA_MINIMA = 2.0          # peso "imaginário" de tecnologias neutras: pouca evidência fica perto de 50%
+COBERTURA_NEUTRA = 0.5          # anúncio sem nenhuma tecnologia reconhecida: não ajuda nem atrapalha
+PENALIDADE_INGLES = 0.10        # anúncio em inglês e inglês básico no perfil
+PALAVRAS_NIVEL = {"estagio": "estagio", "trainee": "trainee", "junior": "junior", "pleno": "pleno", "senior": "senior"}
 AJUSTE_MAXIMO = 0.15
 PASSO_FEEDBACK = 0.2
 
@@ -38,11 +51,38 @@ MOTIVOS_FEEDBACK = {
 }
 
 
+_PADROES_TECNOLOGIA = [(tec, re.compile(rf"(?<![\w#+.]){re.escape(tec)}(?![\w#])", re.IGNORECASE))
+                       for tec in TECNOLOGIAS_VAGAS]
+
+
 def tecnologias_em(texto: str) -> list[str]:
-    return [
-        tec for tec in TECNOLOGIAS_CONHECIDAS
-        if re.search(rf"(?<![\w#+.]){re.escape(tec)}(?![\w#])", texto or "", re.IGNORECASE)
-    ]
+    return [tec for tec, padrao in _PADROES_TECNOLOGIA if padrao.search(texto or "")]
+
+
+def encaixe_cargo(vaga: VagaEncontrada, config: ConfigVagas) -> float:
+    """0 a 1: o título e o nível do anúncio batem com os cargos e níveis das suas buscas?
+
+    Título: todas as palavras de um cargo da busca aparecem no título ("estágio ti" em "Estagiário em TI"
+    vale 1; um cargo de uma palavra só, como "cloud", vale 0,6). Só parte das palavras vale a metade da
+    fração ("analista de ti" em "Analista Financeiro": 0,25). Nível: 1 se é um dos que você procura, 0,5 se o
+    anúncio não diz.
+    """
+    buscas = [b for b in config.buscas if b.nome == vaga.busca] or config.buscas
+    if not buscas:
+        return 0.5
+    do_titulo = set(tokens(vaga.titulo))
+    melhor = 0.0
+    for busca in buscas:
+        for cargo in busca.cargos_efetivos():
+            exigidos = set(tokens(cargo))
+            if exigidos:
+                fracao = len(exigidos & do_titulo) / len(exigidos)
+                valor = (1.0 if len(exigidos) >= 2 else 0.6) if fracao == 1 else 0.5 * fracao
+                melhor = max(melhor, valor)
+    alvo = {n for b in buscas for n in b.niveis}
+    nivel = vaga.nivel or next((PALAVRAS_NIVEL[t] for t in do_titulo if t in PALAVRAS_NIVEL), None)
+    nivel_ok = 0.5 if nivel is None else 1.0 if nivel in alvo else 0.0
+    return round(0.6 * melhor + 0.4 * nivel_ok, 3)
 
 
 def documento_perfil(perfil: PerfilMestre) -> str:
@@ -126,18 +166,23 @@ def calcular_aderencia(
     lacunas = [i.termo for i in relatorio.nao_tem]
     atendidos = no_cv + escondidos
 
-    cobertura = sum(peso[t] for t in atendidos) / sum(peso.values()) if tecs else None
+    # Pouca evidência puxa a cobertura para o meio: 1 tecnologia de 1 reconhecida não é "100% compatível".
+    total = sum(peso.values())
+    cobertura = (sum(peso[t] for t in atendidos) + 0.5 * EVIDENCIA_MINIMA) / (total + EVIDENCIA_MINIMA) if tecs else None
     vetor_perfil = vetor_perfil if vetor_perfil is not None else indice.vetor(documento_perfil(perfil))
     similaridade = indice.cosseno(vetor_perfil, indice.vetor(documento_vaga(vaga)))
     sim_normalizada = min(1.0, similaridade / SIMILARIDADE_REFERENCIA)
-    if cobertura is None:
-        base = sim_normalizada
-    else:
-        base = config.peso_cobertura * cobertura + config.peso_similaridade * sim_normalizada
+    encaixe = encaixe_cargo(vaga, config)
+    partes_nota = [(config.peso_cobertura, COBERTURA_NEUTRA if cobertura is None else cobertura),
+                   (config.peso_similaridade, sim_normalizada), (config.peso_cargo, encaixe)]
+    soma_pesos = sum(p for p, _ in partes_nota) or 1.0
+    base = sum(p * v for p, v in partes_nota) / soma_pesos
+    ingles = _desconto_ingles(perfil, vaga)
     ajuste = ajuste_preferencias(config.preferencias, chaves_preferencia(vaga))
-    nota = round(100 * max(0.0, min(1.0, base + ajuste)))
-    if not vaga.descricao:
-        nota = round(nota * FATOR_SEM_DESCRICAO)
+    nota = round(100 * max(0.0, min(1.0, base + ajuste - ingles)))
+    estimada = not vaga.descricao
+    if estimada:
+        nota = min(nota, NOTA_MAXIMA_ESTIMADA)
 
     partes: list[str] = []
     if tecs:
@@ -151,18 +196,33 @@ def calcular_aderencia(
     else:
         partes.append("sem tecnologias reconhecidas no anúncio")
     partes.append(f"similaridade com o perfil {similaridade:.2f}")
+    partes.append("cargo e nível " + ("combinam com as suas buscas" if encaixe >= 0.8 else
+                                      "combinam em parte com as suas buscas" if encaixe >= 0.5 else
+                                      "pouco parecidos com as suas buscas"))
+    if ingles:
+        partes.append(f"anúncio em inglês e o seu inglês está como básico ({-ingles * 100:.0f} pontos)")
     if ajuste:
         partes.append(f"ajuste pelo seu feedback {ajuste * 100:+.0f} pontos")
-    if not vaga.descricao:
-        partes.append("descrição não coletada: nota estimada só pelo título e reduzida — traga a descrição com "
-                      "'agente vagas link URL --descricao arquivo.txt'")
+    if estimada:
+        partes.append(f"descrição não coletada: nota estimada só pelo título (no máximo {NOTA_MAXIMA_ESTIMADA}) — "
+                      "a próxima busca tenta ler a descrição")
     justificativa = "; ".join(partes)
 
     return Aderencia(
         nota=nota, atendidos=atendidos, lacunas=lacunas, faltam_no_cv=escondidos,
         similaridade=round(similaridade, 3), cobertura=None if cobertura is None else round(cobertura, 3),
         ajuste_feedback=round(ajuste, 3), justificativa=justificativa[:1].upper() + justificativa[1:],
+        encaixe_cargo=encaixe, estimada=estimada,
     )
+
+
+def _desconto_ingles(perfil: PerfilMestre, vaga: VagaEncontrada) -> float:
+    """Anúncio todo em inglês costuma pedir inglês para trabalhar; com inglês básico, a nota desce um pouco."""
+    from .filtros import nivel_no_perfil
+
+    if vaga.idioma != "en" or "ingles" in vaga.idiomas_exigidos:  # exigência explícita já é tratada no filtro
+        return 0.0
+    return PENALIDADE_INGLES if nivel_no_perfil(perfil, "ingles") < 2 else 0.0
 
 
 # ---------------------------------------------------------------- RF-VG-11

@@ -74,6 +74,17 @@ def salvar_lembretes(lembretes: Lembretes) -> Path:
     return _salvar(lembretes, ARQUIVO_LEMBRETES)
 
 
+def marcar_lembrete_feito(lembrete_id: str) -> bool:
+    """Marca o lembrete como feito; False se ele não existe."""
+    lembretes = carregar_lembretes()
+    alvo = next((l for l in lembretes.itens if l.id == lembrete_id), None)
+    if alvo is None:
+        return False
+    alvo.feito = True
+    salvar_lembretes(lembretes)
+    return True
+
+
 def atualizar_lembretes(lembretes: Lembretes, candidatura: Candidatura, dias_followup: int = DIAS_FOLLOWUP) -> list[Lembrete]:
     """Ajusta os lembretes depois de uma mudança de etapa; devolve os criados."""
     criados: list[Lembrete] = []

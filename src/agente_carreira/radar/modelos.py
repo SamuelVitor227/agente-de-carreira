@@ -116,6 +116,7 @@ class ConfigVagas(BaseModel):
     hora_rodada: str = "07:00"     # RF-VG-03
     peso_cobertura: float = 0.7
     peso_similaridade: float = 0.3
+    peso_cargo: float = 0.25       # o cargo e o nível do anúncio combinam com o que você procura
     preferencias: dict[str, float] = Field(default_factory=dict)  # RF-VG-11
     # Domínios cujas páginas de vaga podem ser lidas (com robots.txt respeitado).
     dominios_permitidos: list[str] = Field(default_factory=lambda: ["gupy.io"])
@@ -168,6 +169,8 @@ class Aderencia(BaseModel):
     cobertura: float | None = None
     ajuste_feedback: float = 0.0
     justificativa: str = ""
+    encaixe_cargo: float | None = None  # 0 a 1: cargo e nível do anúncio x o que você procura
+    estimada: bool = False              # sem a descrição: nota só pelo título (aparece como "≈ 50")
 
 
 class Feedback(BaseModel):
