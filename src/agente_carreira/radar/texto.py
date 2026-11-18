@@ -23,6 +23,9 @@ STEM = {
     "dev": "desenvolvedor", "programadora": "programador", "programmer": "programador",
     "engenheira": "engenheiro", "engineer": "engenheiro", "analistas": "analista",
     "jr": "junior", "sr": "senior",
+    "trainees": "trainee", "tecnologias": "tecnologia", "sistema": "sistemas", "tecnica": "tecnico",
+    "tecnicos": "tecnico", "programadores": "programador", "estagiarias": "estagio", "desenvolvimentos": "desenvolvimento",
+    "informatica": "informatica", "seguranca": "seguranca", "it": "ti",
 }
 
 _TOKEN = re.compile(r"(?:(?<![a-z0-9])\.)?[a-z0-9][a-z0-9#+]*(?:\.[a-z0-9]+)*")

@@ -92,6 +92,8 @@ PADROES_LINK_VAGA: dict[str, re.Pattern[str]] = {
     "vagas.com.br": re.compile(r"https?://(?:www\.)?vagas\.com\.br/vagas/(v\d+)", re.I),
     "programathor": re.compile(r"https?://(?:www\.)?programathor\.com\.br/jobs/(\d+)", re.I),
     "geekhunter": re.compile(r"https?://(?:www\.)?geekhunter\.com\.br/vagas/([\w-]+)", re.I),
+    # Alertas do Glassdoor: o identificador vem em jl= ou jobListingId= (link direto ou de parceiro).
+    "glassdoor": re.compile(r"https?://[\w.-]*glassdoor\.com(?:\.br)?/[^\s\"'<>]*?[?&](?:jl|jobListingId)=(\d{6,})", re.I),
 }
 _URL = re.compile(r"https?://\S+")
 _IGNORAR = re.compile(
@@ -107,6 +109,8 @@ def canonizar(plataforma: str, m: re.Match[str]) -> str:
         return f"https://www.linkedin.com/jobs/view/{m.group(1)}"
     if plataforma == "indeed":
         return f"https://br.indeed.com/viewjob?jk={m.group(1)}"
+    if plataforma == "glassdoor":
+        return f"https://www.glassdoor.com.br/partner/jobListing.htm?jobListingId={m.group(1)}"
     return m.group(0).split("?")[0]
 
 
@@ -225,7 +229,8 @@ def vagas_de_email(msg: Message) -> list[VagaBruta]:
 
 REMETENTES_CONHECIDOS = {
     "linkedin.com": "linkedin", "indeed.com": "indeed", "gupy.io": "gupy", "vagas.com.br": "vagas.com.br",
-    "programathor.com.br": "programathor", "geekhunter.com.br": "geekhunter",
+    "programathor.com.br": "programathor", "geekhunter.com.br": "geekhunter", "glassdoor.com": "glassdoor",
+    "glassdoor.com.br": "glassdoor",
 }
 
 

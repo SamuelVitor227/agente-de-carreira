@@ -190,7 +190,7 @@ def avaliar_filtros(
     if not config.buscas:
         return None, gerais
 
-    candidatas = [b for b in config.buscas if casa_cargo(vaga.titulo, b.cargos)]
+    candidatas = [b for b in config.buscas if casa_cargo(vaga.titulo, b.cargos_efetivos())]
     if not candidatas:
         return None, gerais + ["fora dos cargos das buscas salvas"]
     escolhida, menor = candidatas[0].nome, None

@@ -63,14 +63,35 @@ def test_url_de_busca_com_filtros():
     assert "f_WT=2" in auto.url_busca("x", "Brasil", [], [], remoto=True)
 
 
-def test_consultas_alternam_entre_buscas_e_respeitam_o_limite():
+def test_consultas_tem_pesquisa_geral_e_revezam_as_areas_por_dia():
+    from agente_carreira.radar.modelos import PESQUISAS_GERAIS_LINKEDIN
+
     config = ConfigVagas(buscas=[
         BuscaSalva(nome="backend-dotnet", cargos=["dev .net", "dev c#", "backend"], niveis=["estagio"], contratos=["clt"]),
         BuscaSalva(nome="dados", cargos=["analista de dados"], niveis=["junior"], contratos=["clt"], remoto_brasil=False),
     ])
-    lista = auto.consultas(config, LinkedInAutomatico(consultas_por_rodada=3))
-    assert [nome for nome, _ in lista] == ["backend-dotnet", "dados", "backend-dotnet"]
+    cfg = LinkedInAutomatico(consultas_por_rodada=3)
+    dia = date(2026, 11, 18)
+    lista = auto.consultas(config, cfg, hoje=dia)
+    assert lista[0][0] == "geral" and len(lista) == 3
+    termo = PESQUISAS_GERAIS_LINKEDIN[dia.toordinal() % len(PESQUISAS_GERAIS_LINKEDIN)]
+    assert "keywords=" + termo.replace(" ", "+").replace("é", "%C3%A9").replace("ú", "%C3%BA") in lista[0][1]
+    assert "f_E=1%2C2" in lista[0][1]                                            # níveis de todas as buscas
+    amanha = auto.consultas(config, cfg, hoje=date(2026, 11, 19))
+    assert lista[1][0] != amanha[1][0]                                           # cada dia começa por outra área
     assert all("linkedin.com/jobs/search" in url for _, url in lista)
+
+
+def test_termos_gerais_de_ti_valem_para_todas_as_buscas():
+    from agente_carreira.radar.texto import casa_cargo
+
+    busca = BuscaSalva(nome="mobile", cargos=["desenvolvedor mobile"])
+    for titulo in ("Estagiário de TI", "Tecnologia da Informação", "Trainee de Tecnologia", "Analista de TI Júnior",
+                   "Programador Jr", "IT Intern", "Estágio em Desenvolvimento"):
+        assert casa_cargo(titulo, busca.cargos_efetivos()), titulo
+    for titulo in ("Auxiliar Administrativo", "Vendedor Externo", "Analista Financeiro Júnior"):
+        assert not casa_cargo(titulo, busca.cargos_efetivos()), titulo
+    assert not casa_cargo("Tecnologia da Informação", BuscaSalva(nome="x", cargos=["mobile"], termos_gerais=False).cargos_efetivos())
 
 
 def test_cartoes_viram_vagas_sem_ruido():
@@ -406,3 +427,76 @@ def test_login_detectado_em_qualquer_aba():
     assert auto.esperar_login(Pagina(), minutos=1, dormir=_sem_pausa) is True
     Contexto.pages = [Aba("https://www.linkedin.com/checkpoint/challenge")]
     assert auto.esperar_login(Pagina(), minutos=1, dormir=_sem_pausa) is False
+
+
+# ---------------------------------------------------------------- Gupy: preenchimento automático das informações básicas
+
+FORM_GUPY = """<html><body><form onsubmit="window.enviado = true; return false;">
+<label for="n">Nome</label><input id="n">
+<label for="s">Sobrenome</label><input id="s">
+<label for="e">E-mail</label><input id="e" value="meu@outro.com">
+<label for="c">Celular</label><input id="c">
+<label for="cpf">CPF</label><input id="cpf">
+<label for="uf">Estado</label><select id="uf"><option>Selecione</option><option>Minas Gerais</option><option>São Paulo</option></select>
+<label for="ci">Cidade</label><input id="ci">
+<label for="pw">Senha</label><input id="pw" type="password">
+<label for="li">LinkedIn</label><input id="li">
+<button type="submit">Salvar</button></form></body></html>"""
+
+
+def _perfil_basico():
+    from agente_carreira.models import Links
+
+    return PerfilMestre(contato=Contato(nome="Ana Maria Souza", email="ana@example.com", telefone="(31) 99999-0000",
+                                        cidade="Contagem", uf="MG"),
+                        links=Links(linkedin="https://www.linkedin.com/in/ana"))
+
+
+def test_preenche_so_basico_vazio_sem_cpf_senha_nem_envio(navegador):
+    from agente_carreira.preenchimento_auto import campos_basicos, preencher_vazios
+
+    pagina = navegador.new_page()
+    pagina.set_content(FORM_GUPY)
+    ja = set()
+    feitos = preencher_vazios(pagina, campos_basicos(_perfil_basico()), ja)
+    valor = lambda i: pagina.locator(f"#{i}").input_value()
+    assert (valor("n"), valor("s"), valor("c"), valor("ci")) == ("Ana", "Maria Souza", "(31) 99999-0000", "Contagem")
+    assert valor("e") == "meu@outro.com"                                        # nunca sobrescreve
+    assert valor("cpf") == "" and valor("pw") == ""                             # RN-08 e senha são seus
+    assert pagina.locator("#uf").evaluate("e => e.options[e.selectedIndex].text") == "Minas Gerais"
+    assert pagina.locator("#li").input_value() == "https://www.linkedin.com/in/ana"
+    assert pagina.evaluate("window.enviado") is None                            # nunca clica em salvar
+    pagina.locator("#c").fill("")                                               # você limpou: não preenche de novo
+    assert preencher_vazios(pagina, campos_basicos(_perfil_basico()), ja) == []
+    assert "Celular" in feitos
+    pagina.close()
+
+
+def test_nome_sozinho_recebe_nome_completo(navegador):
+    from agente_carreira.preenchimento_auto import campos_basicos, preencher_vazios
+
+    pagina = navegador.new_page()
+    pagina.set_content('<label for="n">Nome</label><input id="n">')
+    preencher_vazios(pagina, campos_basicos(_perfil_basico()), set())
+    assert pagina.locator("#n").input_value() == "Ana Maria Souza"
+    pagina.close()
+
+
+def test_acompanha_so_os_dominios_da_plataforma(monkeypatch):
+    from agente_carreira import preenchimento_auto as pa
+
+    class Pagina:
+        def __init__(self, url):
+            self.url = url
+
+        def is_closed(self):
+            return False
+
+    class Contexto:
+        pages = [Pagina("https://portal.gupy.io/candidato"), Pagina("https://www.google.com/")]
+    visitadas = []
+    monkeypatch.setattr(pa, "preencher_vazios", lambda p, c, j: visitadas.append(p.url) or ["E-mail"])
+    avisos = []
+    total = pa.acompanhar(Contexto(), ["gupy.io"], [], ao_preencher=lambda u, r: avisos.append(u), dormir=_sem_pausa,
+                          horas=0.001, intervalo_s=1)
+    assert set(visitadas) == {"https://portal.gupy.io/candidato"} and total == len(visitadas) and avisos

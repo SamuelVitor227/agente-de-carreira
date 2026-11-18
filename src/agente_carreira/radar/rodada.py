@@ -57,6 +57,8 @@ Dormir = Callable[[float], None]
 PodeLer = Callable[[str], bool]  # modo somente sugestão e modo por plataforma (RF-OP-01, RF-OP-02)
 # Fonte a mais da rodada: recebe a base e devolve (vagas brutas, avisos, adaptadores que pararam).
 ColetorExtra = Callable[[BaseVagas], tuple[list[VagaBruta], list[str], list[str]]]
+# Fonte a mais de e-mails: recebe os message-ids já lidos e devolve ([(message-id, e-mail)], avisos, paradas).
+LeitorEmail = Callable[[set[str]], tuple[list, list[str], list[str]]]
 
 
 def de_bruta(bruta: VagaBruta) -> VagaEncontrada:
@@ -92,7 +94,7 @@ def _sempre(url: str) -> bool:
 def coletar(
     config: ConfigVagas, base: BaseVagas, hoje: date, *, pasta_emails: Path | None, imap: dict[str, str] | None,
     imap_factory=imaplib.IMAP4_SSL, baixar_fn: Baixador = baixar, dormir: Dormir = time.sleep, usar_paginas: bool = True,
-    saude: RegistroSaude | None = None, pode_ler: PodeLer = _sempre,
+    saude: RegistroSaude | None = None, pode_ler: PodeLer = _sempre, leitores_email: Sequence[LeitorEmail] = (),
 ) -> tuple[list[VagaBruta], list[str], list[str]]:
     """Devolve (vagas brutas, avisos da coleta, adaptadores que pararam nesta rodada)."""
     saude = saude if saude is not None else RegistroSaude()
@@ -150,6 +152,14 @@ def coletar(
             for msgid, msg in mensagens:
                 if msgid not in base.emails_processados and ler_mensagem(msg):
                     base.lembrar_email(msgid)
+
+    for leitor in leitores_email:  # ex.: Outlook na web, no navegador do agente (opção do usuário)
+        mensagens, avisos, paradas = leitor(set(base.emails_processados))
+        erros += avisos
+        falhas += paradas
+        for msgid, msg in mensagens:
+            if msgid not in base.emails_processados and ler_mensagem(msg):
+                base.lembrar_email(msgid)
 
     if usar_paginas:
         cargos = config.todos_cargos()
@@ -349,12 +359,13 @@ def executar_rodada(
     baixar_fn: Baixador = baixar, dormir: Dormir = time.sleep, usar_paginas: bool = True,
     enriquecer_links: bool = True, verificar_links: bool = False, motor_justificativa: str = "perguntar",
     saude: RegistroSaude | None = None, pode_ler: PodeLer = _sempre,
-    coletores_extras: Sequence[ColetorExtra] = (),
+    coletores_extras: Sequence[ColetorExtra] = (), leitores_email: Sequence[LeitorEmail] = (),
 ) -> ResultadoRodada:
     inicio = datetime.now(timezone.utc)
     brutas, erros, falhas = coletar(
         config, base, hoje, pasta_emails=pasta_emails, imap=imap, imap_factory=imap_factory,
         baixar_fn=baixar_fn, dormir=dormir, usar_paginas=usar_paginas, saude=saude, pode_ler=pode_ler,
+        leitores_email=leitores_email,
     )
     for coletor in coletores_extras:  # ex.: navegador automático no LinkedIn, só se o usuário ligou (RN-04)
         extras, avisos, paradas = coletor(base)

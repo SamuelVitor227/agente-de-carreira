@@ -21,7 +21,7 @@ import time
 import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from urllib.parse import urlencode
 
@@ -127,10 +127,25 @@ def _local_da_busca(busca: BuscaSalva, padrao: str) -> str:
     return padrao if _norm(primeira) == "belo horizonte" else f"{primeira}, Brasil"
 
 
-def consultas(config: ConfigVagas, cfg: LinkedInAutomatico) -> list[tuple[str, str]]:
-    """(busca, url) alternando entre as buscas salvas, até o limite por rodada."""
+def consultas(config: ConfigVagas, cfg: LinkedInAutomatico, hoje: date | None = None) -> list[tuple[str, str]]:
+    """(busca, url): uma pesquisa geral de TI em toda rodada e as áreas revezando a cada dia, até o limite."""
+    from ..radar.modelos import PESQUISAS_GERAIS_LINKEDIN
+
+    hoje = hoje or date.today()
     por_busca: list[list[tuple[str, str]]] = []
-    for busca in config.buscas:
+    if config.buscas:
+        niveis = sorted({n for b in config.buscas for n in b.niveis})
+        contratos = sorted({c for b in config.buscas for c in b.contratos})
+        local = _local_da_busca(config.buscas[0], cfg.local_padrao)
+        termo = PESQUISAS_GERAIS_LINKEDIN[hoje.toordinal() % len(PESQUISAS_GERAIS_LINKEDIN)]
+        geral = [("geral", url_busca(termo, local, niveis, contratos, ultimas_horas=cfg.ultimas_horas))]
+    else:
+        geral = []
+    buscas = list(config.buscas)
+    if buscas:  # revezamento: cada dia começa por uma área diferente
+        inicio = hoje.toordinal() % len(buscas)
+        buscas = buscas[inicio:] + buscas[:inicio]
+    for busca in buscas:
         itens = []
         cargos = list(dict.fromkeys(busca.cargos))[:2]
         for cargo in cargos:
@@ -140,7 +155,7 @@ def consultas(config: ConfigVagas, cfg: LinkedInAutomatico) -> list[tuple[str, s
             itens.append((busca.nome, url_busca(cargos[0], "Brasil", busca.niveis, busca.contratos, remoto=True,
                                                 ultimas_horas=cfg.ultimas_horas)))
         por_busca.append(itens)
-    intercaladas = [item for grupo in zip_longo(por_busca) for item in grupo]
+    intercaladas = geral + [item for grupo in zip_longo(por_busca) for item in grupo]
     return intercaladas[:cfg.consultas_por_rodada]
 
 

@@ -550,3 +550,49 @@ def plataformas_estudo(id_: str = typer.Argument(..., metavar="ID")) -> None:
     destino.write_text("\n".join(linhas) + "\n", encoding="utf-8")
     console.print("\n".join(linhas), markup=False, highlight=False)
     console.print(f"\n[green]Salvo em[/green] {destino}")
+
+
+@plataformas_app.command("abrir")
+def plataformas_abrir(
+    id_: str = typer.Argument("gupy", metavar="ID", help="Plataforma do catálogo (padrão: gupy)."),
+    url: str | None = typer.Option(None, "--url", help="Endereço para abrir (padrão: o site da plataforma)."),
+) -> None:
+    """Abre o site no navegador do agente e preenche sozinho as informações básicas nos formulários (só campos vazios)."""
+    from .configuracao import carregar_configuracao
+    from .navegador import NavegadorOcupado, SessaoNavegador, playwright_disponivel
+    from .plataformas.catalogo import buscar_plataforma
+    from .preenchimento_auto import acompanhar, campos_basicos, dominio_de
+
+    try:
+        plataforma = buscar_plataforma(id_)
+    except ValueError as erro:
+        console.print(f"[red]{escape(str(erro))}[/red]")
+        raise typer.Exit(1)
+    if carregar_configuracao().somente_sugestao:
+        console.print("[yellow]Modo só sugestões ligado: nenhum site é aberto pelo agente (desligue em Configurações).[/yellow]")
+        raise typer.Exit(1)
+    if not playwright_disponivel():
+        console.print("[red]O navegador do agente precisa do Playwright ('uv sync').[/red]")
+        raise typer.Exit(1)
+    campos = campos_basicos(carregar_perfil())
+    endereco = url or plataforma.url
+    dominio = dominio_de(endereco)
+    raiz = ".".join(dominio.split(".")[-2:]) if not dominio.endswith(".com.br") else ".".join(dominio.split(".")[-3:])
+    console.print(Panel(
+        f"O navegador do agente abriu {escape(plataforma.nome)}. Entre na sua conta (login, 2FA e CAPTCHA são seus) e "
+        "navegue normalmente.\n\nEm qualquer formulário do site, o agente preenche sozinho: "
+        f"{escape(', '.join(c.rotulo for c in campos))}.\nSó campos vazios; ele nunca apaga o que você escreveu e nunca "
+        "clica em salvar ou enviar. CPF e senha são sempre seus.\n\nFeche o navegador quando terminar.",
+        title=f"{plataforma.nome} com preenchimento automático", border_style="magenta"))
+    try:
+        with SessaoNavegador() as sessao:
+            sessao.pagina.goto(endereco, wait_until="domcontentloaded")
+
+            def avisar(endereco_pagina: str, rotulos: list[str]) -> None:
+                console.print(f"[green]Preenchido:[/green] {escape(', '.join(rotulos))} [dim]({escape(endereco_pagina[:70])})[/dim]")
+
+            total = acompanhar(sessao.pagina.context, [raiz], campos, ao_preencher=avisar)
+    except NavegadorOcupado as erro:
+        console.print(f"[yellow]{escape(str(erro))}[/yellow]")
+        raise typer.Exit(1)
+    console.print(f"Navegador fechado. {total} campo(s) preenchido(s) pelo agente nesta sessão.")

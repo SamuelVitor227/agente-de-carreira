@@ -232,11 +232,18 @@ def vagas_rodada(
     pasta = emails or diretorio_dados() / "caixa-alertas"
     pasta.mkdir(parents=True, exist_ok=True)
     imap = None if sem_imap else config_imap()
-    if not sem_imap and imap is None:
+    if not sem_imap and imap is None and not central.email_navegador.ativo:
         console.print(f"[dim]IMAP não configurado (variáveis AGENTE_IMAP_*); lendo os .eml de {pasta}.[/dim]")
 
     saude = carregar_saude()
     base = carregar_base()
+    leitores = []
+    if central.email_navegador.ativo and not sem_imap:
+        from .radar.outlook_web import leitor_da_rodada
+
+        console.print("[magenta]E-mail: lendo os alertas de vaga no Outlook, pelo navegador do agente.[/magenta]")
+        leitores.append(leitor_da_rodada(central.email_navegador.consultas, saude,
+                                         por_consulta=central.email_navegador.por_consulta))
     extras = []
     auto = central.linkedin_automatico
     if auto.ativo and not sem_linkedin and not central.somente_sugestao             and central.modos_plataforma.get("linkedin") != "desligado":
@@ -250,6 +257,7 @@ def vagas_rodada(
             usar_paginas=not sem_paginas, enriquecer_links=not sem_enriquecer, verificar_links=verificar_links,
             motor_justificativa=central.motor_da_tarefa("justificativa-vagas"),
             saude=saude, pode_ler=lambda url: plataforma_permite_leitura(central, url), coletores_extras=extras,
+            leitores_email=leitores,
         )
     except Exception as erro:  # noqa: BLE001 - a falha fica registrada na tarefa e é notificada
         salvar_saude(saude)

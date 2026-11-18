@@ -112,9 +112,21 @@ class LinkedInAutomatico(BaseModel):
         return valor
 
 
+class EmailNavegador(BaseModel):
+    """Alertas de vaga lidos pelo Outlook na web, no navegador do agente (para quem não usa senha de app)."""
+
+    ativo: bool = False
+    consultas: list[str] = Field(default_factory=lambda: [
+        "from:jobalerts-noreply@linkedin.com", "from:jobs-listings@linkedin.com", "from:indeed.com", "from:gupy.io",
+        "from:vagas.com.br", "from:programathor.com.br", "from:geekhunter.com.br", "from:glassdoor.com",
+    ])
+    por_consulta: int = 15                   # alertas mais recentes abertos por remetente, por rodada
+
+
 class Configuracao(BaseModel):
     somente_sugestao: bool = False          # RF-OP-02
     linkedin_automatico: LinkedInAutomatico = Field(default_factory=LinkedInAutomatico)
+    email_navegador: EmailNavegador = Field(default_factory=EmailNavegador)
     motores: dict[str, str] = Field(default_factory=dict)  # RF-IA-01
     limites: Limites = Field(default_factory=Limites)
     horarios: Horarios = Field(default_factory=Horarios)

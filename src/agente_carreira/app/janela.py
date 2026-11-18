@@ -964,6 +964,10 @@ class App:
 
         grade = self._grade(corpo, 2)
         itens = [
+            ("Abrir a Gupy (preenche seus dados)", "Abre a Gupy no navegador do agente. Em todo formulário, ele preenche "
+             "nome, e-mail, telefone, cidade, estado e links (só campos vazios, nunca envia nada).",
+             "Abrir a Gupy", lambda: self.executar("Gupy com preenchimento automático", ["plataformas", "abrir", "gupy"]),
+             "primario"),
             ("Gerar meu currículo (PDF e Word)", "Um currículo limpo, que os robôs de seleção (ATS) conseguem ler.",
              "Gerar currículo", self._gerar_cv, "primario"),
             ("Nota do currículo", "De 0 a 100: o quanto seu currículo combina com as vagas que você quer, e o que melhorar.",

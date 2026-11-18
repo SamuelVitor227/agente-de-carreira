@@ -2155,6 +2155,9 @@ from .cli_relatorios import exportar_dados, painel, relatorio_app  # noqa: E402
 app.command("painel")(painel)
 app.add_typer(relatorio_app, name="relatorio")
 app.command("exportar")(exportar_dados)
+from .cli_email import email_app  # noqa: E402
+
+app.add_typer(email_app, name="email")
 
 
 @app.command("app")

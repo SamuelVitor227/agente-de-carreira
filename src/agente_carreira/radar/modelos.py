@@ -27,6 +27,22 @@ REGIAO_BH = [
 ]
 
 # Cargos e sinônimos por foco (configuração; cresce com o uso).
+# Termos de TI em início de carreira que valem para TODAS as buscas (estágio, trainee e júnior).
+# O título precisa conter todas as palavras de um termo; variações (jr/júnior, estagiário/estágio,
+# intern/estágio...) são unificadas em radar.texto.STEM.
+TERMOS_GERAIS_TI: list[str] = [
+    "estágio ti", "estágio tecnologia", "estágio tecnologia da informação", "estágio informática",
+    "estágio sistemas", "estágio desenvolvimento", "estágio programação", "estágio software",
+    "estágio computação", "estágio dados", "estágio suporte", "estágio infraestrutura", "estágio desenvolvedor",
+    "trainee ti", "trainee tecnologia", "trainee desenvolvimento", "trainee dados", "trainee sistemas",
+    "tecnologia da informação", "desenvolvedor", "programador", "analista de ti", "analista de sistemas",
+    "analista desenvolvedor", "analista de tecnologia", "técnico de ti", "técnico em informática",
+    "suporte ti", "suporte técnico", "help desk", "service desk", "desenvolvedor júnior", "programador júnior",
+    "analista júnior ti", "software", "estágio cyber", "estágio segurança da informação",
+]
+# Pesquisas gerais da automação no LinkedIn (uma por rodada, revezando com as áreas).
+PESQUISAS_GERAIS_LINKEDIN: list[str] = ["estágio TI", "trainee tecnologia", "desenvolvedor júnior", "estágio desenvolvimento"]
+
 SINONIMOS_POR_FOCO: dict[str, list[str]] = {
     "backend-dotnet": [
         "desenvolvedor .net", "desenvolvedor c#", "desenvolvedor backend", "desenvolvedor back-end",
@@ -77,6 +93,10 @@ class BuscaSalva(BaseModel):
     empresas_alvo: list[EmpresaAlvo] = Field(default_factory=list)
     empresas_bloqueadas: list[str] = Field(default_factory=list)
     limite_anos_experiencia: int = 2
+    termos_gerais: bool = True   # aceita também os termos gerais de TI (TERMOS_GERAIS_TI)
+
+    def cargos_efetivos(self) -> list[str]:
+        return list(dict.fromkeys(self.cargos + (TERMOS_GERAIS_TI if self.termos_gerais else [])))
 
 
 class ConfigVagas(BaseModel):
@@ -107,7 +127,7 @@ class ConfigVagas(BaseModel):
         return list(vistas.values())
 
     def todos_cargos(self) -> list[str]:
-        return [c for b in self.buscas for c in b.cargos]
+        return list(dict.fromkeys(c for b in self.buscas for c in b.cargos_efetivos()))
 
     def buscar(self, nome: str) -> BuscaSalva:
         for busca in self.buscas:
