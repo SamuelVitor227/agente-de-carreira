@@ -22,8 +22,11 @@ LARGURA_SAIDA = "112"  # colunas das tabelas na janela de execução
 
 def preparar_ambiente() -> None:
     """Antes de importar a CLI: cores do rich (viram cores na janela), largura e a pasta data/ do projeto."""
+    from ..operacao.credenciais import carregar_variaveis_do_usuario
+
     os.environ.setdefault("FORCE_COLOR", "1")
     os.environ["COLUMNS"] = LARGURA_SAIDA
+    carregar_variaveis_do_usuario()  # e-mail configurado pelo app, mesmo que o Windows não tenha repassado ainda
     if os.environ.get("AGENTE_CARREIRA_DATA") is None:
         os.chdir(raiz_do_projeto())
 

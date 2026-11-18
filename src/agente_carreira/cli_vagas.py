@@ -203,6 +203,7 @@ def vagas_rodada(
     sem_enriquecer: bool = typer.Option(False, "--sem-enriquecer", help="Não abre a página das vagas de domínios permitidos."),
     verificar_links: bool = typer.Option(False, "--verificar-links", help="Confere se vagas já vistas saíram do ar (domínios permitidos)."),
     forcar: bool = typer.Option(False, "--forcar", help="Roda mesmo com a rodada pausada."),
+    sem_linkedin: bool = typer.Option(False, "--sem-linkedin", help="Não usa o navegador automático no LinkedIn nesta rodada."),
 ) -> None:
     """Rodada de vagas: coleta, deduplica, filtra, pontua e gera o resumo do dia (RF-VG-03, RF-VG-09)."""
     from .configuracao import carregar_configuracao, plataforma_permite_leitura
@@ -236,12 +237,19 @@ def vagas_rodada(
 
     saude = carregar_saude()
     base = carregar_base()
+    extras = []
+    auto = central.linkedin_automatico
+    if auto.ativo and not sem_linkedin and not central.somente_sugestao             and central.modos_plataforma.get("linkedin") != "desligado":
+        from .linkedin.automatico import coletor_da_rodada
+
+        console.print("[magenta]LinkedIn: buscando vagas no navegador do agente (modo automático que você ligou).[/magenta]")
+        extras.append(coletor_da_rodada(config, auto, saude))
     try:
         resultado = executar_rodada(
             perfil, config, base, date.today(), pasta_emails=pasta, imap=imap,
             usar_paginas=not sem_paginas, enriquecer_links=not sem_enriquecer, verificar_links=verificar_links,
             motor_justificativa=central.motor_da_tarefa("justificativa-vagas"),
-            saude=saude, pode_ler=lambda url: plataforma_permite_leitura(central, url),
+            saude=saude, pode_ler=lambda url: plataforma_permite_leitura(central, url), coletores_extras=extras,
         )
     except Exception as erro:  # noqa: BLE001 - a falha fica registrada na tarefa e é notificada
         salvar_saude(saude)

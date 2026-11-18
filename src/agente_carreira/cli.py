@@ -47,6 +47,9 @@ ingles_app = typer.Typer(help="Perfil secundário em inglês (RF-LI-10).", no_ar
 post_app = typer.Typer(help="Publicações sobre projetos, publicadas só com sua aprovação (RF-LI-12).", no_args_is_help=True)
 li_app.add_typer(ingles_app, name="ingles")
 li_app.add_typer(post_app, name="post")
+from .cli_linkedin_auto import auto_app  # noqa: E402
+
+li_app.add_typer(auto_app, name="automatico")
 app.add_typer(perfil_app, name="perfil")
 app.add_typer(experiencia_app, name="experiencia")
 app.add_typer(conquista_app, name="conquista")

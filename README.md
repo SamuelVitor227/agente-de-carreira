@@ -176,6 +176,7 @@ uv run agente li auditar                 # auditoria do LinkedIn (checklist Anex
 uv run agente li titulo / sobre / experiencias / competencias       # textos do LinkedIn
 uv run agente li open-to-work / ajustes / alertas / rodada          # pacotes e passo a passo
 uv run agente li conectar export.zip     # traz o LinkedIn pela exportação oficial: perfil + estado atual
+uv run agente li automatico [ligar --aceito-o-risco|entrar|testar|desligar]   # automação opcional no LinkedIn
 uv run agente li sincronizar export.zip  # estado real do LinkedIn pela exportação oficial
 uv run agente li propor                  # antes × depois e aprovação campo a campo
 uv run agente li log / aplicado ID / reverter ID   # log de alterações com reversão
@@ -227,7 +228,24 @@ uv run agente notificacoes teste         # testa o canal de notificação
 
 ### LinkedIn
 
-O agente não faz login no LinkedIn: assim a sua conta não corre risco de restrição por automação (RN-04). Os dados entram pela exportação oficial. No LinkedIn, vá em Eu → Configurações e privacidade → Privacidade de dados → Obter uma cópia dos seus dados e baixe o ZIP. Depois rode `agente li conectar ARQUIVO.zip` (ou use o botão "Conectar LinkedIn (ZIP)…" do app). Ele preenche o perfil-mestre com a sua confirmação e registra o estado atual do perfil, que serve de base para as propostas de alteração. As alterações você aplica no LinkedIn, no modo copiloto.
+Por padrão, o agente não entra na sua conta. Os dados do perfil vêm da exportação oficial: no LinkedIn, Eu → Configurações e privacidade → Privacidade de dados → Obter uma cópia dos seus dados. Com o ZIP, rode `agente li conectar ARQUIVO.zip`, ou use o botão "Conectar LinkedIn (ZIP)…" do app. As vagas chegam pelos alertas de e-mail do LinkedIn, e as mudanças no perfil você aprova e cola (copiloto).
+
+**Automação (opcional, RN-04).** Os termos do LinkedIn proíbem automação, então ela fica desligada até você ligar aceitando o risco: `agente li automatico ligar --aceito-o-risco`, ou o botão "Ligar automação…" na tela LinkedIn do app. Com ela ligada:
+
+- Você entra uma vez na conta pelo navegador do agente (`agente li automatico entrar`). Login, 2FA e CAPTCHA são seus.
+- Cada rodada de vagas também pesquisa no LinkedIn pelas suas buscas salvas. Por padrão são 4 páginas por rodada e no máximo 12 vagas abertas, com pausas aleatórias de 4 a 11 segundos. Limites e seletores ficam em `linkedin_automatico` na configuração.
+- Em `agente candidatar`, o agente abre a Candidatura Simplificada e preenche cada etapa com o seu perfil e as respostas aprovadas. Ele anexa o currículo, avança e **para antes de "Enviar candidatura"**: o envio é sempre seu. Pergunta sem resposta aprovada fica para você.
+- Se o LinkedIn pedir login ou verificação, o agente para e avisa. Se a página estiver diferente do esperado, ele para e marca o adaptador em `agente saude`.
+
+`agente li automatico testar` faz uma busca de teste sem salvar nada, e `agente li automatico desligar` volta ao modo padrão.
+
+### Candidatar às melhores
+
+No app, Vagas → "Candidatar às melhores" prepara de uma vez até 5 candidaturas: as vagas recomendadas de maior nota, sem indício de golpe e dentro do limite do dia. Em cada uma, o agente monta o kit, preenche no site (Gupy, LinkedIn com automação ligada etc.) e para na revisão. Você confere e clica em Enviar.
+
+### E-mail
+
+No app, "Receber vagas do seu e-mail" (Início ou Configurações) pede o provedor (Gmail, Outlook/Hotmail ou Yahoo), o endereço e uma **senha de app**. É a mesma conta que você vê no Outlook. O agente lê direto do servidor, só para ler, e pode usar o mesmo e-mail para mandar os avisos. As credenciais vão para as variáveis de ambiente do seu usuário do Windows (RNF-01), nunca para `data/` nem para o git. O "novo Outlook" do Windows não permite automação, por isso a leitura é direta pela conta.
 
 ### Modo assistido (Playwright)
 
@@ -262,4 +280,6 @@ Os dados ficam em `data/perfil-mestre.json` (fora do git), configurável pela va
 
 Já decidido: construção B, em código próprio em Python. Motor por tarefa, canal de notificação e modo por plataforma ficam na configuração (`agente config`) e mudam sem mexer no código.
 
-Ainda são suas: nível-alvo depois de 2026/2; faixa salarial (`agente respostas definir pretensao_estagio ...`); presencial fora de BH ou mudança de cidade; visibilidade do Open to Work; modo assistido no LinkedIn (o padrão segue copiloto); plataformas P2 da fase 2.
+Modo assistido no LinkedIn: disponível como automação opcional, desligada por padrão e ligada só com o aceite do risco.
+
+Ainda são suas: nível-alvo depois de 2026/2; faixa salarial (`agente respostas definir pretensao_estagio ...`); presencial fora de BH ou mudança de cidade; visibilidade do Open to Work; plataformas P2 da fase 2.

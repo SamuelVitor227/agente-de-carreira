@@ -66,16 +66,21 @@ def _utc(momento: datetime) -> datetime:
     return momento if momento.tzinfo else momento.replace(tzinfo=timezone.utc)
 
 
-def primeiros_passos(*, tem_perfil: bool, tem_linkedin: bool, tem_busca: bool, tem_vagas: bool) -> list[Passo]:
+def primeiros_passos(*, tem_perfil: bool, tem_linkedin: bool, tem_busca: bool, tem_vagas: bool,
+                     tem_email: bool = True, tem_agendamento: bool = True) -> list[Passo]:
     return [
         Passo("Trazer seu currículo", "O agente lê seu currículo (PDF ou Word) e monta seu perfil. Você confere tudo.",
               tem_perfil, "importar_cv"),
-        Passo("Conectar seu LinkedIn", "Com o arquivo que o próprio LinkedIn gera. O agente nunca entra na sua conta.",
+        Passo("Conectar seu LinkedIn", "Com o arquivo que o próprio LinkedIn gera, sem passar sua senha para o agente.",
               tem_linkedin, "conectar_linkedin"),
         Passo("Dizer que vagas você procura", "Área, cidade e tipo de contrato. Dá para mudar quando quiser.",
               tem_busca, "criar_busca"),
+        Passo("Receber vagas do seu e-mail", "O LinkedIn e outros sites mandam alertas de vaga; o agente lê sozinho, "
+              "só para ler (nunca apaga nem responde).", tem_email, "email_alertas"),
         Passo("Fazer a primeira busca de vagas", "O agente procura, dá uma nota para cada vaga e separa as melhores.",
               tem_vagas, "buscar_vagas"),
+        Passo("Ligar a busca automática todo dia", "Toda manhã o agente busca sozinho e deixa o resumo pronto até as 8h.",
+              tem_agendamento, "agendar_busca"),
     ]
 
 
@@ -123,9 +128,14 @@ def montar_inicio(dados=None) -> Inicio:
         "aprovacoes": len(dados.fila),
         "parados": sum(1 for a in dados.saude.adaptadores.values() if a.status == "parado"),
     }
+    from ..operacao.credenciais import email_configurado
+    from ..radar.agenda import tarefa_agendada
+
+    agendada = tarefa_agendada()
     passos = primeiros_passos(tem_perfil=tem_perfil, tem_linkedin=bool(carregar_estado().campos),
                               tem_busca=bool(config.buscas),
-                              tem_vagas=bool(dados.base.itens) or dados.base.ultima_rodada is not None)
+                              tem_vagas=bool(dados.base.itens) or dados.base.ultima_rodada is not None,
+                              tem_email=bool(email_configurado()), tem_agendamento=agendada is not False)
     nome = dados.perfil.contato.nome.split()[0] if dados.perfil and dados.perfil.contato.nome else None
     return Inicio(nome=nome, passos=passos, proximo=proximo_passo(passos, numeros, dados.base.ultima_rodada),
                   numeros=numeros, ultima_busca=dados.base.ultima_rodada)
@@ -261,3 +271,21 @@ def comandos_busca(respostas: dict, existentes: set[str]) -> tuple[list[list[str
     comandos = [["busca", "criar", "--nome", foco, "--foco", foco, *comuns] for foco in focos if foco not in existentes]
     puladas = [FOCOS[f] for f in focos if f in existentes]
     return comandos, puladas
+
+
+# ---------------------------------------------------------------- "Candidatar às melhores"
+
+LOTE_MAXIMO = 5  # candidaturas por vez: cada uma tem revisão e envio feitos por você
+
+
+def vagas_restantes_hoje(candidaturas, limite_diario: int, hoje=None) -> int:
+    """Quantas candidaturas ainda cabem hoje no limite diário (RF-CA-05)."""
+    hoje = hoje or datetime.now().astimezone().date()
+    enviadas = sum(1 for c in candidaturas.itens if c.enviada_em and _utc(c.enviada_em).astimezone().date() == hoje)
+    return max(0, limite_diario - enviadas)
+
+
+def melhores_para_candidatar(base, candidaturas, nota_minima: int, restantes: int) -> list[LinhaVaga]:
+    """As vagas recomendadas de maior nota, sem golpe e sem candidatura enviada, até o que cabe hoje."""
+    boas = [l for l in linhas_vagas(base, candidaturas, "recomendadas") if l.nota >= nota_minima and not l.alerta]
+    return boas[:max(0, min(restantes, LOTE_MAXIMO))]

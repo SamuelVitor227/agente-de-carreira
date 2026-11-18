@@ -1,0 +1,503 @@
+"""Navegador automático no LinkedIn: opção do usuário, ciente do risco (RN-04). Desligado por padrão.
+
+Quando ligado ('agente li automatico ligar --aceito-o-risco'):
+- usa o navegador do agente (perfil em data/navegador), onde VOCÊ entrou na conta (RN-03);
+- busca vagas pelas suas buscas salvas, poucas páginas por rodada, com pausas aleatórias (RN-05);
+- na Candidatura Simplificada, preenche cada etapa e avança, mas para antes de "Enviar candidatura":
+  o clique de envio é sempre seu (RN-01, RF-CA-03, CA-11);
+- só responde com o que está no seu perfil ou nas respostas aprovadas; o resto fica para você (RN-09);
+- login expirado, verificação de segurança ou CAPTCHA: para e avisa (RN-03);
+- página diferente do esperado: para e marca o adaptador (RF-OP-07, RNF-08).
+
+Os termos de uso do LinkedIn proíbem automação: a conta pode ser restringida. Por isso o modo é opcional,
+lento de propósito e registra quando você aceitou o risco.
+"""
+
+from __future__ import annotations
+
+import random
+import re
+import time
+import unicodedata
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
+from urllib.parse import urlencode
+
+from ..configuracao import LinkedInAutomatico
+from ..operacao.saude import LayoutMudou
+from ..radar.extracao import campos_de_jobposting, html_para_texto, jobpostings
+from ..radar.modelos import BuscaSalva, ConfigVagas, VagaBruta
+
+ORIGEM = "linkedin:navegador"
+ADAPTADOR = "navegador:linkedin"
+URL_BUSCA = "https://www.linkedin.com/jobs/search/"
+URL_LOGIN = "https://www.linkedin.com/login"
+URL_FEED = "https://www.linkedin.com/feed/"
+
+# Nível do agente → filtro de experiência do LinkedIn (1 estágio, 2 assistente/júnior, 3 pleno).
+NIVEL_LINKEDIN = {"estagio": "1", "trainee": "2", "junior": "2", "pleno": "3", "senior": "4"}
+CONTRATO_LINKEDIN = {"estagio": "I", "clt": "F", "pj": "C"}
+
+Dormir = Callable[[float], None]
+
+
+class LoginNecessario(Exception):
+    """Sem sessão, sessão expirada, verificação de segurança ou CAPTCHA: é com você (RN-03)."""
+
+
+def _norm(texto: str | None) -> str:
+    return unicodedata.normalize("NFKD", texto or "").encode("ascii", "ignore").decode().lower().strip()
+
+
+def pausa(cfg: LinkedInAutomatico, dormir: Dormir, aleatorio: random.Random | None = None) -> None:
+    dormir((aleatorio or random).uniform(cfg.intervalo_min_s, cfg.intervalo_max_s))
+
+
+# ---------------------------------------------------------------- sessão
+
+def checar_pagina(pagina) -> None:
+    url = (pagina.url or "").lower()
+    if any(p in url for p in ("/login", "/checkpoint", "/authwall", "/uas/", "challenge")):
+        raise LoginNecessario("O LinkedIn pediu login ou uma verificação de segurança. Entre na conta pelo "
+                              "navegador do agente ('agente li automatico entrar') e tente de novo.")
+
+
+def esta_logado(pagina, dormir: Dormir = time.sleep) -> bool:
+    pagina.goto(URL_FEED, wait_until="domcontentloaded")
+    dormir(2)
+    try:
+        checar_pagina(pagina)
+    except LoginNecessario:
+        return False
+    return "linkedin.com" in (pagina.url or "")
+
+
+def esperar_login(pagina, minutos: int = 10, dormir: Dormir = time.sleep) -> bool:
+    """Abre a tela de login e espera você entrar (login, 2FA e CAPTCHA são seus)."""
+    pagina.goto(URL_LOGIN, wait_until="domcontentloaded")
+    for _ in range(minutos * 30):
+        dormir(2)
+        url = (pagina.url or "").lower()
+        if "linkedin.com" in url and any(p in url for p in ("/feed", "/jobs", "/in/", "/mynetwork")):
+            return True
+        if pagina.is_closed():
+            return False
+    return False
+
+
+# ---------------------------------------------------------------- busca
+
+def url_busca(cargo: str, local: str | None, niveis: list[str], contratos: list[str], *, remoto: bool = False,
+              ultimas_horas: int = 24) -> str:
+    parametros = {"keywords": cargo, "sortBy": "DD", "f_TPR": f"r{max(1, ultimas_horas) * 3600}"}
+    if local:
+        parametros["location"] = local
+    experiencia = sorted({NIVEL_LINKEDIN[n] for n in niveis if n in NIVEL_LINKEDIN})
+    if experiencia:
+        parametros["f_E"] = ",".join(experiencia)
+    tipos = sorted({CONTRATO_LINKEDIN[c] for c in contratos if c in CONTRATO_LINKEDIN})
+    if tipos:
+        parametros["f_JT"] = ",".join(tipos)
+    if remoto:
+        parametros["f_WT"] = "2"
+    return f"{URL_BUSCA}?{urlencode(parametros)}"
+
+
+def _local_da_busca(busca: BuscaSalva, padrao: str) -> str:
+    if not busca.localidades:
+        return padrao
+    primeira = busca.localidades[0]
+    return padrao if _norm(primeira) == "belo horizonte" else f"{primeira}, Brasil"
+
+
+def consultas(config: ConfigVagas, cfg: LinkedInAutomatico) -> list[tuple[str, str]]:
+    """(busca, url) alternando entre as buscas salvas, até o limite por rodada."""
+    por_busca: list[list[tuple[str, str]]] = []
+    for busca in config.buscas:
+        itens = []
+        cargos = list(dict.fromkeys(busca.cargos))[:2]
+        for cargo in cargos:
+            itens.append((busca.nome, url_busca(cargo, _local_da_busca(busca, cfg.local_padrao), busca.niveis,
+                                                busca.contratos, ultimas_horas=cfg.ultimas_horas)))
+        if busca.remoto_brasil and cargos:
+            itens.append((busca.nome, url_busca(cargos[0], "Brasil", busca.niveis, busca.contratos, remoto=True,
+                                                ultimas_horas=cfg.ultimas_horas)))
+        por_busca.append(itens)
+    intercaladas = [item for grupo in zip_longo(por_busca) for item in grupo]
+    return intercaladas[:cfg.consultas_por_rodada]
+
+
+def zip_longo(listas: list[list]) -> list[list]:
+    maior = max((len(l) for l in listas), default=0)
+    return [[l[i] for l in listas if i < len(l)] for i in range(maior)]
+
+
+# Lê os cartões de vaga da página de resultados: robusto a classes CSS, ancorado no link /jobs/view/ID.
+JS_CARTOES = r"""
+() => {
+  const vistos = new Set(); const saida = [];
+  for (const a of document.querySelectorAll('a[href*="/jobs/view/"]')) {
+    const m = (a.getAttribute('href') || '').match(/\/jobs\/view\/(?:[^/?#]*-)?(\d{6,})/) || (a.href || '').match(/\/jobs\/view\/(?:[^/?#]*-)?(\d{6,})/);
+    if (!m || vistos.has(m[1])) continue;
+    vistos.add(m[1]);
+    const cartao = a.closest('li') || a.closest('[data-job-id]') || a.parentElement;
+    const linhas = ((cartao || a).innerText || '').split('\n').map(s => s.trim()).filter(Boolean);
+    saida.push({id: m[1], titulo: ((a.innerText || a.getAttribute('aria-label') || '').split('\n')[0] || '').trim(), linhas});
+  }
+  return saida;
+}
+"""
+
+_RUIDO = re.compile(
+    r"^(promovid[ao]|promoted|candidatura simplificada|easy apply|visualizad[ao]|viewed|salv[ao]|saved|"
+    r"ativamente recrutando|actively recruiting|seja um dos|be an early applicant|novo|new|"
+    r"h[aá] \d|\d+ (minutos?|horas?|dias?|semanas?|meses|minutes?|hours?|days?|weeks?|months?)|"
+    r".*candidat(o|os|ura|uras)$|.*applicants?$|.*conex(ão|ões|ao|oes) trabalh|.*alumni|.*verifica[cç][aã]o$|"
+    r"with verification|com verifica[cç][aã]o|\d+ benef)",
+    re.IGNORECASE,
+)
+
+
+def limpar_titulo(titulo: str) -> str:
+    return re.sub(r"\s*(with verification|com verifica[cç][aã]o)\s*$", "", titulo, flags=re.IGNORECASE).strip()
+
+
+def cartoes_para_vagas(cartoes: list[dict]) -> list[VagaBruta]:
+    vagas = []
+    for c in cartoes:
+        titulo = limpar_titulo(c.get("titulo") or "")
+        linhas = [limpar_titulo(l) for l in c.get("linhas") or []]
+        if not titulo and linhas:
+            titulo = linhas[0]
+        resto = [l for l in linhas if l and _norm(l) != _norm(titulo) and not _norm(l).startswith(_norm(titulo))
+                 and not _RUIDO.match(l)]
+        if not titulo:
+            continue
+        vagas.append(VagaBruta(
+            titulo=titulo, empresa=resto[0] if resto else None, local=resto[1] if len(resto) > 1 else None,
+            link=f"https://www.linkedin.com/jobs/view/{c['id']}", fonte_tipo="pagina", fonte_origem=ORIGEM,
+        ))
+    return vagas
+
+
+def _rolar_resultados(pagina, dormir: Dormir) -> None:
+    for _ in range(3):
+        pagina.evaluate("""() => {
+            const lista = document.querySelector('.jobs-search-results-list, .scaffold-layout__list > div, main');
+            (lista || document.scrollingElement).scrollBy(0, 1600);
+        }""")
+        dormir(1.2)
+
+
+def ler_resultados(pagina, url: str, cfg: LinkedInAutomatico, dormir: Dormir) -> list[VagaBruta]:
+    pagina.goto(url, wait_until="domcontentloaded")
+    checar_pagina(pagina)
+    dormir(2.5)
+    _rolar_resultados(pagina, dormir)
+    return cartoes_para_vagas(pagina.evaluate(JS_CARTOES))[:cfg.vagas_por_consulta]
+
+
+JS_JSONLD = "() => [...document.querySelectorAll('script[type=\"application/ld+json\"]')].map(s => s.textContent || '')"
+
+
+def ler_detalhe(pagina, vaga: VagaBruta, cfg: LinkedInAutomatico, dormir: Dormir) -> VagaBruta:
+    """Abre a vaga e completa descrição (e o que o JSON-LD trouxer)."""
+    pagina.goto(vaga.link, wait_until="domcontentloaded")
+    checar_pagina(pagina)
+    dormir(2)
+    dados = {}
+    postings = jobpostings(pagina.evaluate(JS_JSONLD))
+    if postings:
+        dados = {k: v for k, v in campos_de_jobposting(postings[0]).items() if v}
+        if not dados.get("descricao") and postings[0].get("description"):
+            dados["descricao"] = html_para_texto(str(postings[0]["description"]))
+    if not dados.get("descricao"):
+        for seletor in cfg.seletores_descricao:
+            alvo = pagina.locator(seletor)
+            if alvo.count():
+                dados["descricao"] = alvo.first.inner_text().strip()
+                break
+    campos = {k: v for k, v in dados.items() if k in VagaBruta.model_fields and k not in ("fonte_tipo", "fonte_origem", "link")}
+    return vaga.model_copy(update={k: v for k, v in campos.items() if not getattr(vaga, k, None) or k == "descricao"})
+
+
+@dataclass
+class ResultadoBusca:
+    vagas: list[VagaBruta] = field(default_factory=list)
+    avisos: list[str] = field(default_factory=list)
+    consultas: int = 0
+
+
+def buscar_vagas(pagina, config: ConfigVagas, cfg: LinkedInAutomatico, links_conhecidos: set[str], *,
+                 dormir: Dormir = time.sleep, aleatorio: random.Random | None = None) -> ResultadoBusca:
+    """Busca pelas buscas salvas e lê a descrição das vagas novas. LoginNecessario/LayoutMudou sobem para quem chamou."""
+    resultado = ResultadoBusca()
+    encontradas: dict[str, VagaBruta] = {}
+    lista = consultas(config, cfg)
+    if not lista:
+        resultado.avisos.append("LinkedIn: nenhuma busca salva para pesquisar")
+        return resultado
+    vazias = 0
+    for i, (nome, url) in enumerate(lista):
+        if i:
+            pausa(cfg, dormir, aleatorio)
+        vagas = ler_resultados(pagina, url, cfg, dormir)
+        resultado.consultas += 1
+        if not vagas:
+            vazias += 1
+        for v in vagas:
+            encontradas.setdefault(v.link, v)
+    if vazias == len(lista):
+        corpo = _norm(pagina.evaluate("() => document.body ? document.body.innerText.slice(0, 4000) : ''"))
+        if not any(p in corpo for p in ("nenhuma vaga", "no matching jobs", "nao encontramos", "no jobs found")):
+            raise LayoutMudou("nenhum cartão de vaga nas páginas de busca do LinkedIn (o layout pode ter mudado)")
+    novas = [v for link, v in encontradas.items() if link not in links_conhecidos]
+    for j, vaga in enumerate(novas):
+        if j < cfg.detalhes_por_rodada:
+            pausa(cfg, dormir, aleatorio)
+            try:
+                vaga = ler_detalhe(pagina, vaga, cfg, dormir)
+            except LoginNecessario:
+                raise
+            except Exception as erro:  # noqa: BLE001 - uma vaga com problema não derruba a busca
+                resultado.avisos.append(f"LinkedIn: não li a descrição de '{vaga.titulo}': {type(erro).__name__}")
+        resultado.vagas.append(vaga)
+    if len(novas) > cfg.detalhes_por_rodada:
+        resultado.avisos.append(f"LinkedIn: {len(novas) - cfg.detalhes_por_rodada} vaga(s) nova(s) entraram só com "
+                                "título; a descrição é lida nas próximas rodadas ou quando você abrir a vaga")
+    return resultado
+
+
+def coletor_da_rodada(config: ConfigVagas, cfg: LinkedInAutomatico, saude, *, abrir_sessao=None,
+                      dormir: Dormir = time.sleep):
+    """Fonte extra da rodada diária (radar.rodada.ColetorExtra). Erros viram avisos; a rodada continua."""
+    def coletar(base) -> tuple[list[VagaBruta], list[str], list[str]]:
+        if not saude.pode_usar(ADAPTADOR):
+            return [], [f"{ADAPTADOR}: parado após erro (agente saude reativar {ADAPTADOR})"], []
+        from ..navegador import SessaoNavegador, playwright_disponivel
+
+        if abrir_sessao is None and not playwright_disponivel():
+            return [], ["LinkedIn: o navegador automático precisa do Playwright ('uv sync')"], []
+        conhecidos = {v.link for v in base.itens if v.link} | {f.url for v in base.itens for f in v.fontes if f.url}
+        try:
+            with (abrir_sessao or SessaoNavegador)() as sessao:
+                resultado = buscar_vagas(sessao.pagina, config, cfg, conhecidos, dormir=dormir)
+        except LoginNecessario as erro:
+            saude.falha(ADAPTADOR, str(erro))
+            return [], [f"LinkedIn: {erro}"], [f"LinkedIn: {erro}"]
+        except LayoutMudou as erro:
+            parou = saude.falha(ADAPTADOR, str(erro), parar=True)
+            return [], [f"LinkedIn: {erro}"], [f"{ADAPTADOR}: {erro}"] if parou else []
+        except Exception as erro:  # noqa: BLE001 - a busca no LinkedIn não derruba a rodada
+            saude.falha(ADAPTADOR, f"{type(erro).__name__}: {erro}")
+            return [], [f"LinkedIn: {type(erro).__name__}: {erro}"], []
+        saude.sucesso(ADAPTADOR)
+        return resultado.vagas, resultado.avisos, []
+
+    return coletar
+
+
+# ---------------------------------------------------------------- Candidatura Simplificada
+
+JS_CAMPOS = r"""
+(raiz) => {
+  const saida = []; let i = 0;
+  const rotulo = (el) => {
+    if (el.labels && el.labels.length) return el.labels[0].innerText;
+    const ids = el.getAttribute('aria-labelledby');
+    if (ids) { const t = ids.split(' ').map(x => document.getElementById(x)).filter(Boolean).map(e => e.innerText).join(' '); if (t) return t; }
+    return el.getAttribute('aria-label') || el.getAttribute('placeholder') || '';
+  };
+  for (const el of raiz.querySelectorAll('input, textarea, select')) {
+    const tipo = (el.getAttribute('type') || '').toLowerCase();
+    if (['hidden', 'radio', 'checkbox', 'submit', 'button'].includes(tipo) || el.disabled) continue;
+    if (tipo !== 'file' && el.offsetParent === null) continue;
+    el.setAttribute('data-agente', String(i));
+    const tag = el.tagName.toLowerCase();
+    saida.push({i: i++, tag, tipo, rotulo: (rotulo(el) || '').trim(),
+      obrigatorio: el.required || el.getAttribute('aria-required') === 'true',
+      valor: tag === 'select' ? (el.selectedIndex >= 0 ? el.options[el.selectedIndex].text.trim() : '') : (tipo === 'file' ? '' : (el.value || '')),
+      opcoes: tag === 'select' ? [...el.options].map(o => o.text.trim()) : []});
+  }
+  for (const fs of raiz.querySelectorAll('fieldset')) {
+    const radios = [...fs.querySelectorAll('input[type=radio]')];
+    if (!radios.length) continue;
+    fs.setAttribute('data-agente', String(i));
+    const legenda = ((fs.querySelector('legend') || fs).innerText || '').split('\n')[0].trim();
+    saida.push({i: i++, tag: 'fieldset', tipo: 'radio', rotulo: legenda,
+      obrigatorio: radios.some(r => r.required) || fs.getAttribute('aria-required') === 'true' || /\*|obrigat|required/i.test(legenda),
+      valor: radios.some(r => r.checked) ? 'marcado' : '',
+      opcoes: radios.map(r => ((r.labels && r.labels[0] ? r.labels[0].innerText : r.value) || '').trim())});
+  }
+  return saida;
+}
+"""
+
+_SELECIONE = re.compile(r"^(selecion|select|escolh|choose)", re.IGNORECASE)
+_EQUIVALENTES = {"sim": {"sim", "yes"}, "nao": {"nao", "no"}, "yes": {"sim", "yes"}, "no": {"nao", "no"}}
+
+
+def escolher_opcao(resposta: str, opcoes: list[str]) -> str | None:
+    """A opção que corresponde à resposta (Sim/Não valem em português e inglês)."""
+    alvo = _norm(re.split(r"[—–-]", resposta, maxsplit=1)[0])
+    aceitas = _EQUIVALENTES.get(alvo, {alvo})
+    for opcao in opcoes:
+        if _norm(opcao) in aceitas:
+            return opcao
+    for opcao in opcoes:
+        if alvo and len(alvo) >= 3 and (_norm(opcao).startswith(alvo) or alvo.startswith(_norm(opcao)) and _norm(opcao)):
+            return opcao
+    return None
+
+
+def _so_numero(resposta: str) -> str | None:
+    m = re.search(r"\d+(?:[.,]\d+)?", resposta.replace(".", "") if re.search(r"\d\.\d{3}", resposta) else resposta)
+    return m.group(0).replace(",", ".") if m else None
+
+
+@dataclass
+class ResultadoCandidatura:
+    parou: str = ""                      # revisao | pergunta_sem_resposta | sem_candidatura_simplificada | layout | erro | limite
+    etapas: int = 0
+    preenchidos: list[str] = field(default_factory=list)
+    sem_resposta: list[str] = field(default_factory=list)
+    mensagem: str = ""
+    captura: Path | None = None
+
+
+def _botao(escopo, nomes: list[str]):
+    padrao = re.compile(r"^\s*(" + "|".join(re.escape(n) for n in nomes) + r")\b", re.IGNORECASE)
+    alvo = escopo.get_by_role("button", name=padrao)
+    for k in range(alvo.count()):
+        if alvo.nth(k).is_visible():
+            return alvo.nth(k)
+    return None
+
+
+def preencher_etapa(dialogo, responder: Callable[[str], str | None], cv: Path | None, *, cfg: LinkedInAutomatico,
+                    dormir: Dormir, resultado: ResultadoCandidatura, acoes_restantes: list[int]) -> list[str]:
+    """Preenche os campos vazios da etapa; devolve as perguntas obrigatórias que ficaram sem resposta."""
+    faltando: list[str] = []
+    for campo in dialogo.evaluate(JS_CAMPOS):
+        rotulo = re.sub(r"\s+", " ", campo["rotulo"]).strip(" *")
+        vazio = not campo["valor"] or (campo["tag"] == "select" and _SELECIONE.match(campo["valor"]))
+        if not vazio:
+            continue
+        alvo = dialogo.locator(f'[data-agente="{campo["i"]}"]')
+        if campo["tipo"] == "file":
+            if cv and cv.is_file() and acoes_restantes[0] > 0:
+                alvo.set_input_files(str(cv))
+                resultado.preenchidos.append("currículo (arquivo)")
+                acoes_restantes[0] -= 1
+            continue
+        resposta = responder(rotulo) if rotulo else None
+        valor: str | None = None
+        if resposta:
+            if campo["tag"] in ("select", "fieldset"):
+                valor = escolher_opcao(resposta, campo["opcoes"])
+            elif campo["tipo"] == "number":
+                valor = _so_numero(resposta)
+            else:
+                valor = resposta
+        if valor is None:
+            if campo["obrigatorio"]:
+                faltando.append(rotulo or "(campo sem rótulo)")
+            continue
+        if acoes_restantes[0] <= 0:
+            faltando.append(rotulo)
+            continue
+        pausa(cfg, dormir)
+        if campo["tag"] == "select":
+            alvo.select_option(label=valor)
+        elif campo["tag"] == "fieldset":
+            alvo.get_by_label(valor, exact=True).first.check()
+        else:
+            alvo.fill(valor)
+        acoes_restantes[0] -= 1
+        resultado.preenchidos.append(rotulo)
+    return faltando
+
+
+def candidatura_simplificada(pagina, url: str, responder: Callable[[str], str | None], cv: Path | None,
+                             cfg: LinkedInAutomatico, *, limite_acoes: int = 30, dormir: Dormir = time.sleep,
+                             pasta_capturas: Path | None = None) -> ResultadoCandidatura:
+    """Abre a vaga, abre a Candidatura Simplificada e avança as etapas. Nunca clica em enviar."""
+    resultado = ResultadoCandidatura()
+    pagina.goto(url, wait_until="domcontentloaded")
+    checar_pagina(pagina)
+    dormir(2.5)
+    abrir = _botao(pagina, cfg.botoes_candidatura)
+    if abrir is None:
+        resultado.parou = "sem_candidatura_simplificada"
+        resultado.mensagem = ("Esta vaga não tem Candidatura Simplificada: a inscrição é no site da empresa. "
+                              "Clique em 'Candidatar-se' no LinkedIn e siga por lá.")
+        return resultado
+    abrir.click()  # abre o formulário; não envia nada
+    dormir(2)
+    acoes = [limite_acoes]
+    for _ in range(cfg.max_etapas_candidatura):
+        dialogo = pagina.get_by_role("dialog")
+        if not dialogo.count():
+            raise LayoutMudou("o formulário da Candidatura Simplificada não abriu como esperado")
+        dialogo = dialogo.first
+        resultado.etapas += 1
+        faltando = preencher_etapa(dialogo, responder, cv, cfg=cfg, dormir=dormir, resultado=resultado,
+                                   acoes_restantes=acoes)
+        if _botao(dialogo, cfg.botoes_enviar) is not None:
+            resultado.parou = "revisao"
+            resultado.sem_resposta += faltando
+            resultado.mensagem = "Parei na revisão. Confira tudo no navegador e clique em 'Enviar candidatura' você mesmo."
+            break
+        if faltando:
+            resultado.parou = "pergunta_sem_resposta"
+            resultado.sem_resposta += faltando
+            resultado.mensagem = ("Há perguntas que só você pode responder (o agente não inventa respostas). "
+                                  "Responda no navegador, avance e envie você mesmo.")
+            break
+        if acoes[0] <= 0:
+            resultado.parou = "limite"
+            resultado.mensagem = "Cheguei ao limite de ações desta sessão (ritmo humano). Termine você no navegador."
+            break
+        avancar = _botao(dialogo, cfg.botoes_avancar)
+        if avancar is None:
+            raise LayoutMudou("não achei o botão de avançar na Candidatura Simplificada")
+        pausa(cfg, dormir)
+        avancar.click()
+        dormir(1.5)
+        erro = dialogo.locator(".artdeco-inline-feedback--error, [role=alert]")
+        if erro.count() and erro.first.is_visible() and erro.first.inner_text().strip():
+            resultado.parou = "erro"
+            resultado.mensagem = f"O LinkedIn apontou um problema: {erro.first.inner_text().strip()}. Corrija no navegador."
+            break
+    else:
+        resultado.parou = "limite"
+        resultado.mensagem = "Muitas etapas: parei por segurança. Termine você no navegador."
+    if pasta_capturas is not None:
+        pasta_capturas.mkdir(parents=True, exist_ok=True)
+        resultado.captura = pasta_capturas / f"linkedin-{datetime.now():%Y%m%d-%H%M%S}.png"
+        pagina.screenshot(path=str(resultado.captura))
+    return resultado
+
+
+def responder_com_perfil(perfil, banco, contrato: str | None = None) -> Callable[[str], str | None]:
+    """Respostas só do banco aprovado e do perfil (RN-09); telefone, e-mail e cidade vêm do contato."""
+    from ..candidatar.kit import responder
+
+    contato = perfil.contato
+    diretos = [
+        (re.compile(r"telefone|celular|phone|mobile|whats", re.I), contato.telefone),
+        (re.compile(r"e-?mail", re.I), contato.email),
+        (re.compile(r"^(cidade|city|localiza|location)", re.I), ", ".join(p for p in (contato.cidade, contato.uf) if p) or None),
+        (re.compile(r"^(nome|first name|primeiro nome)", re.I), contato.nome.split()[0] if contato.nome else None),
+        (re.compile(r"^(sobrenome|last name)", re.I), " ".join(contato.nome.split()[1:]) or None if contato.nome else None),
+    ]
+
+    def responder_rotulo(rotulo: str) -> str | None:
+        for padrao, valor in diretos:
+            if padrao.search(rotulo):
+                return valor or None
+        return responder(rotulo, perfil, banco, contrato).resposta
+
+    return responder_rotulo

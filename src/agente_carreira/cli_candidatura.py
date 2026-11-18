@@ -173,13 +173,65 @@ def _registrar_envio(candidatura, kit, modo: str, captura: Path | None) -> None:
     salvar_lembretes(lembretes)
 
 
-def _preencher_assistido(kit, link: str, central) -> Path | None:
+def _preencher_linkedin(link: str, central, cv: Path | None, perfil, contrato: str | None) -> Path | None:
+    """Candidatura Simplificada no navegador do agente: preenche e avança, para antes de enviar (RN-04 por opção)."""
+    from .linkedin.automatico import LoginNecessario, candidatura_simplificada, responder_com_perfil
+    from .navegador import SessaoNavegador
+    from .operacao.notificacoes import notificar
+    from .operacao.saude import LayoutMudou, carregar_saude, salvar_saude
+    from .respostas import carregar_respostas
+
+    nome = "assistido:linkedin"
+    saude = carregar_saude()
+    if not saude.pode_usar(nome):
+        console.print("[yellow]A candidatura automática no LinkedIn está parada após um erro; seguindo em copiloto "
+                      "(reative em 'agente saude reativar assistido:linkedin').[/yellow]")
+        return None
+    responder = responder_com_perfil(perfil, carregar_respostas(), contrato)
+    with SessaoNavegador() as sessao:
+        console.print("[magenta]Abrindo a vaga no LinkedIn, no navegador do agente…[/magenta]")
+        resultado = None
+        for tentativa in range(2):
+            try:
+                resultado = candidatura_simplificada(
+                    sessao.pagina, link, responder, cv, central.linkedin_automatico,
+                    limite_acoes=central.limites.acoes_por_sessao, pasta_capturas=diretorio_dados() / "auditoria" / "capturas")
+                break
+            except LoginNecessario as erro:
+                if tentativa:
+                    console.print(f"[red]{escape(str(erro))}[/red]")
+                    return None
+                console.print(Panel("O LinkedIn pediu login. Entre na sua conta no navegador que abriu (login, 2FA e "
+                                    "CAPTCHA são seus, RN-03). Depois volte aqui.", title="Login no LinkedIn",
+                                    border_style="magenta"))
+                typer.prompt("Tecle Enter quando tiver entrado", default="", show_default=False)
+            except LayoutMudou as erro:
+                saude.falha(nome, str(erro), parar=True)
+                salvar_saude(saude)
+                notificar("falha_adaptador", "Candidatura automática parada no LinkedIn", str(erro), central)
+                console.print(f"[red]Parei: {escape(str(erro))}. Siga em copiloto com os valores abaixo.[/red]")
+                return None
+        saude.sucesso(nome)
+        salvar_saude(saude)
+        if resultado.preenchidos:
+            console.print(f"[green]Preenchido pelo agente em {resultado.etapas} etapa(s):[/green] "
+                          f"{escape(', '.join(dict.fromkeys(resultado.preenchidos)))}")
+        if resultado.sem_resposta:
+            console.print(f"[yellow]Só você pode responder:[/yellow] {escape('; '.join(resultado.sem_resposta))}")
+        console.print(f"[bold]{escape(resultado.mensagem)}[/bold]")
+        typer.prompt("Tecle Enter depois de revisar (e enviar, se quiser) para fechar o navegador", default="", show_default=False)
+        return resultado.captura if resultado.parou != "sem_candidatura_simplificada" else None
+
+
+def _preencher_assistido(kit, link: str, central, cv: Path | None = None, perfil=None, contrato: str | None = None) -> Path | None:
     from .configuracao import plataforma_da_url
     from .navegador import CampoParaPreencher, SessaoNavegador, preencher
     from .operacao.notificacoes import notificar
     from .operacao.saude import LayoutMudou, carregar_saude, salvar_saude
 
     plataforma = plataforma_da_url(link)
+    if plataforma == "linkedin":
+        return _preencher_linkedin(link, central, cv, perfil, contrato)
     nome = f"assistido:{plataforma}"
     saude = carregar_saude()
     if not saude.pode_usar(nome):
@@ -190,10 +242,13 @@ def _preencher_assistido(kit, link: str, central) -> Path | None:
         campos.append(CampoParaPreencher(id="apresentacao", rotulo="Apresente-se", valor=kit.apresentacao))
     campos += [CampoParaPreencher(id=f"pergunta{i}", rotulo=p.texto, valor=p.resposta, obrigatorio=bool(p.resposta and p.eliminatoria))
                for i, p in enumerate(kit.perguntas)]
+    if cv is not None and cv.is_file():
+        campos.append(CampoParaPreencher(id="cv", rotulo="Currículo", valor=str(cv), arquivo=True))
     with SessaoNavegador() as sessao:
         sessao.pagina.goto(link)
         console.print(Panel("No navegador: faça login, 2FA e CAPTCHA (RN-03) e abra o formulário de candidatura. "
-                            "Anexe o CV quando a plataforma pedir. Depois volte aqui.", title="Modo assistido", border_style="magenta"))
+                            "Depois volte aqui: o agente preenche e anexa o currículo.", title="Modo assistido",
+                            border_style="magenta"))
         typer.prompt("Tecle Enter quando o formulário estiver aberto", default="", show_default=False)
         try:
             resultado = preencher(sessao.pagina, campos, limite_acoes=central.limites.acoes_por_sessao,
@@ -254,7 +309,16 @@ def candidatar(
 
     banco = carregar_respostas()
     foco = foco or (vaga.busca if vaga.busca in SINONIMOS_POR_FOCO else "backend-dotnet")
-    kit = montar_kit(perfil, vaga, _ler_perguntas(perguntas), banco, foco=foco, idioma=idioma, nivel=nivel or vaga.nivel or "estagio")
+    plataforma = plataforma_da_url(vaga.link) if vaga.link else None
+    linkedin_automatico = (plataforma == "linkedin" and central.linkedin_automatico.ativo and not copiloto
+                           and not central.somente_sugestao and playwright_disponivel())
+    if linkedin_automatico and perguntas is None:
+        # No LinkedIn automático, as perguntas do formulário são lidas e respondidas na hora, no navegador.
+        console.print("[dim]LinkedIn automático: o agente responde as perguntas do formulário direto no navegador.[/dim]")
+        lista_perguntas: list[tuple[str, bool | None]] = []
+    else:
+        lista_perguntas = _ler_perguntas(perguntas)
+    kit = montar_kit(perfil, vaga, lista_perguntas, banco, foco=foco, idioma=idioma, nivel=nivel or vaga.nivel or "estagio")
     if pendencias_na_variante(kit.variante) or verificar_lastro(kit.variante, perfil):
         _sair("O CV sob medida tem frases [A CONFIRMAR] ou itens sem lastro (RN-02); rode 'agente confirmar' e revise o perfil.")
 
@@ -293,9 +357,12 @@ def candidatar(
 
     modo = central.modos_plataforma.get(candidatura.plataforma or "", "copiloto")
     captura = None
-    usar_assistido = (modo == "assistido" and not copiloto and vaga.link and not central.somente_sugestao and playwright_disponivel())
+    usar_assistido = linkedin_automatico or (
+        modo == "assistido" and not copiloto and vaga.link and not central.somente_sugestao and playwright_disponivel())
     if usar_assistido:
-        captura = _preencher_assistido(kit, vaga.link, central)
+        captura = _preencher_assistido(kit, vaga.link, central, cv=Path(arquivos[0]) if arquivos else None,
+                                       perfil=perfil, contrato=vaga.contrato)
+        modo = "assistido" if captura is not None else modo
     if captura is None:
         console.print(Panel(
             "\n".join([f"1. Abra a vaga: {escape(vaga.link or '(sem link)')}", "2. Faça login, 2FA e CAPTCHA (seu, RN-03).",

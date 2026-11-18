@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import imaplib
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -55,6 +55,8 @@ CAMPOS_SEMPRE_DO_TEXTO = (
 
 Dormir = Callable[[float], None]
 PodeLer = Callable[[str], bool]  # modo somente sugestão e modo por plataforma (RF-OP-01, RF-OP-02)
+# Fonte a mais da rodada: recebe a base e devolve (vagas brutas, avisos, adaptadores que pararam).
+ColetorExtra = Callable[[BaseVagas], tuple[list[VagaBruta], list[str], list[str]]]
 
 
 def de_bruta(bruta: VagaBruta) -> VagaEncontrada:
@@ -347,12 +349,18 @@ def executar_rodada(
     baixar_fn: Baixador = baixar, dormir: Dormir = time.sleep, usar_paginas: bool = True,
     enriquecer_links: bool = True, verificar_links: bool = False, motor_justificativa: str = "perguntar",
     saude: RegistroSaude | None = None, pode_ler: PodeLer = _sempre,
+    coletores_extras: Sequence[ColetorExtra] = (),
 ) -> ResultadoRodada:
     inicio = datetime.now(timezone.utc)
     brutas, erros, falhas = coletar(
         config, base, hoje, pasta_emails=pasta_emails, imap=imap, imap_factory=imap_factory,
         baixar_fn=baixar_fn, dormir=dormir, usar_paginas=usar_paginas, saude=saude, pode_ler=pode_ler,
     )
+    for coletor in coletores_extras:  # ex.: navegador automático no LinkedIn, só se o usuário ligou (RN-04)
+        extras, avisos, paradas = coletor(base)
+        brutas += extras
+        erros += avisos
+        falhas += paradas
     proc = processar(
         brutas, base, perfil, config, hoje, baixar_fn=baixar_fn, dormir=dormir,
         enriquecer_links=enriquecer_links, verificar_links=verificar_links, pode_ler=pode_ler,

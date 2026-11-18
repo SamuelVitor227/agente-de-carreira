@@ -143,9 +143,10 @@ class Formulario(tk.Toplevel):
             bloco.pack(fill="x", pady=6)
             if tipo != "marcar":
                 rotulo(bloco, texto, F_NEGRITO).pack(anchor="w")
-            if tipo == "texto":
+            if tipo in ("texto", "senha"):
                 var = tk.StringVar(value=padrao or "")
-                ttk.Entry(bloco, textvariable=var, width=60, font=F_NORMAL).pack(anchor="w", pady=(3, 0), ipady=3)
+                ttk.Entry(bloco, textvariable=var, width=60, font=F_NORMAL, show="•" if tipo == "senha" else "").pack(
+                    anchor="w", pady=(3, 0), ipady=3)
                 self._leitores[chave] = var.get
             elif tipo == "textolongo":
                 caixa = tk.Text(bloco, width=62, height=6, font=F_NORMAL, wrap="word", relief="solid", bd=1)
@@ -489,7 +490,10 @@ class App:
         texto.pack(side="left", fill="x", expand=True)
         rotulo(texto, titulo, F_TITULO).pack(anchor="w")
         if subtitulo:
-            rotulo(texto, subtitulo, F_NORMAL, SUAVE, wraplength=560).pack(anchor="w", pady=(2, 0))
+            sub = rotulo(texto, subtitulo, F_NORMAL, SUAVE, wraplength=560)
+            sub.pack(anchor="w", pady=(2, 0), fill="x")
+            # Quebra a linha pela largura que sobra ao lado dos botões (nada fica cortado).
+            texto.bind("<Configure>", lambda e: sub.configure(wraplength=max(220, e.width - 8)))
         return acoes
 
     def _cartao_acao(self, pai, titulo: str, descricao: str, botao: str, comando, linha: int, coluna: int,
@@ -515,6 +519,7 @@ class App:
             "saude": lambda: self.executar("Fontes de vagas", ["saude"]),
             "vagas": lambda: self.mostrar("vagas"), "candidaturas": lambda: self.mostrar("candidaturas"),
             "aprovacoes": lambda: self.mostrar("aprovacoes"),
+            "email_alertas": self.configurar_email, "agendar_busca": self._agendar_busca,
         }[chave]()
 
     def importar_cv(self) -> None:
@@ -576,6 +581,53 @@ class App:
         if comandos:
             self.executar("Salvar busca de vagas" if len(comandos) == 1 else f"Salvar {len(comandos)} buscas de vagas",
                           comandos)
+
+    def configurar_email(self) -> None:
+        from ..configuracao import carregar_configuracao, salvar_configuracao
+        from ..operacao import credenciais
+
+        provedores = [(chave, nome) for chave, (nome, _, _) in credenciais.PROVEDORES.items()]
+        explicacao = ("O agente lê os alertas de vaga que chegam no seu e-mail (LinkedIn, Gupy, Indeed…), só para ler: "
+                      "nunca apaga, marca ou responde. Use a mesma conta que aparece no seu Outlook (Gmail, Hotmail…): "
+                      "o agente lê direto do servidor e você continua usando o Outlook normalmente. Use uma SENHA DE "
+                      "APP, não a senha normal do e-mail.\n\n"
+                      "Gmail: " + credenciais.COMO_CRIAR_SENHA_DE_APP["gmail"] + "\n\n"
+                      "Para receber alertas do LinkedIn: pesquise a vaga no LinkedIn, ligue \"Criar alerta\" e escolha "
+                      "receber por e-mail, todo dia.")
+        r = perguntar(self.raiz, "Receber vagas do seu e-mail", explicacao, [
+            ("provedor", "Seu e-mail é do", "escolha", provedores, "gmail", None),
+            ("email", "Endereço de e-mail", "texto", None, credenciais.email_configurado() or "", None),
+            ("senha", "Senha de app", "senha", None, "", "16 letras geradas pelo provedor. Fica só no seu Windows."),
+            ("pasta", "Pasta onde chegam os alertas", "texto", None, "INBOX",
+             "INBOX = caixa de entrada. Se você criou um marcador só para vagas, escreva o nome dele."),
+            ("avisos", "Mandar também os avisos do agente para este e-mail", "marcar", None, True, None),
+        ], botao="Salvar e testar")
+        if not r:
+            return
+        cfg = credenciais.ConfigEmail(provedor=r["provedor"], email=r["email"], senha=r["senha"], pasta=r["pasta"],
+                                      avisos=r["avisos"])
+        try:
+            valores = credenciais.variaveis(cfg)
+            self.raiz.config(cursor="watch")
+            self.raiz.update()
+            quantos = credenciais.testar_imap(valores["AGENTE_IMAP_HOST"], valores["AGENTE_IMAP_USUARIO"],
+                                              valores["AGENTE_IMAP_SENHA"], valores["AGENTE_IMAP_PASTA"])
+            credenciais.gravar_variaveis_do_usuario(valores)
+        except Exception as erro:  # noqa: BLE001 - login recusado, pasta errada, sem internet...
+            messagebox.showerror(NOME_APP, f"Não consegui entrar no e-mail: {erro}\n\nConfira o endereço, a senha de "
+                                 "app e a pasta. Nada foi salvo.", parent=self.raiz)
+            return
+        finally:
+            self.raiz.config(cursor="")
+        if cfg.avisos:
+            central = carregar_configuracao()
+            central.notificacao.canal = "email"
+            central.notificacao.email_para = cfg.email.strip()
+            salvar_configuracao(central)
+        messagebox.showinfo(NOME_APP, f"Pronto! Entrei no e-mail e achei {quantos} mensagem(ns) da última semana na pasta "
+                            f"{cfg.pasta or 'INBOX'}.\n\nA partir de agora, cada busca lê os alertas de vaga.",
+                            parent=self.raiz)
+        self.atualizar()
 
     def abrir_pasta_dados(self) -> None:
         from ..storage import diretorio_dados
@@ -656,7 +708,8 @@ class App:
         acoes = self._cabecalho(pai, "Vagas", "As vagas que o agente encontrou, da maior nota para a menor. "
                                               "A nota mostra o quanto a vaga combina com você.")
         Botao(acoes, "Adicionar vaga por link", self._adicionar_vaga).pack(side="right", padx=(8, 0))
-        Botao(acoes, "Buscar vagas agora", lambda: self.acao("buscar_vagas"), "primario").pack(side="right")
+        Botao(acoes, "Candidatar às melhores", self._candidatar_melhores, "primario").pack(side="right", padx=(8, 0))
+        Botao(acoes, "Buscar vagas agora", lambda: self.acao("buscar_vagas")).pack(side="right")
 
         filtro = getattr(self, "_filtro_vagas", "recomendadas")
         abas = tk.Frame(pai, bg=FUNDO)
@@ -968,8 +1021,8 @@ class App:
         from ..linkedin.estado import carregar_estado
 
         corpo = area_rolavel(pai)
-        self._cabecalho(corpo, "LinkedIn", "O agente não entra na sua conta: ele prepara cada mudança, você aprova "
-                                           "e cola no LinkedIn. Assim sua conta fica segura.")
+        self._cabecalho(corpo, "LinkedIn", "Para o seu perfil, o agente prepara cada mudança e você aprova e cola no "
+                                           "LinkedIn. Para vagas, você escolhe abaixo se ele trabalha sozinho.")
         conectado = bool(carregar_estado().campos)
         faixa = tk.Frame(corpo, bg=DESTAQUE_CLARO if conectado else ATENCAO_CLARO, padx=18, pady=12)
         faixa.pack(fill="x", padx=32, pady=(0, 8))
@@ -977,6 +1030,7 @@ class App:
                F_NEGRITO, DESTAQUE if conectado else ATENCAO, bg=faixa.cget("bg")).pack(side="left")
         Botao(faixa, "Atualizar dados" if conectado else "Conectar agora", self.conectar_linkedin,
               "link" if conectado else "primario").pack(side="right")
+        self._cartao_automacao_linkedin(corpo)
 
         grade = self._grade(corpo, 2)
         itens = [
@@ -1001,6 +1055,68 @@ class App:
         for i, (titulo, descricao, botao, comando, tipo) in enumerate(itens):
             self._cartao_acao(grade, titulo, descricao, botao, comando, i // 2, i % 2, tipo)
         tk.Frame(corpo, bg=FUNDO, height=20).pack()
+
+    def _cartao_automacao_linkedin(self, corpo) -> None:
+        from ..cli_linkedin_auto import RISCO
+        from ..configuracao import carregar_configuracao
+
+        cfg = carregar_configuracao().linkedin_automatico
+        bloco = cartao(corpo, padx=22, pady=16)
+        bloco.pack(fill="x", padx=32, pady=(0, 8))
+        topo = tk.Frame(bloco, bg=CARTAO)
+        topo.pack(fill="x")
+        estado_txt = "LIGADA" if cfg.ativo else "desligada"
+        rotulo(topo, f"Automação no LinkedIn: {estado_txt}", F_SUBTITULO, PERIGO if cfg.ativo else TEXTO,
+               bg=CARTAO).pack(side="left")
+        if cfg.ativo:
+            descricao = ("O agente usa o navegador dele, com a sua conta, para procurar vagas em cada busca e preencher a "
+                         "Candidatura Simplificada. Ele para antes de \"Enviar candidatura\": o clique final é seu.")
+        else:
+            descricao = ("Desligada, o LinkedIn entra pelos alertas de e-mail e você aplica com a ajuda do agente. "
+                         "Ligada, o agente procura vagas e preenche a Candidatura Simplificada sozinho. Atenção: o "
+                         "LinkedIn proíbe automação e pode restringir a conta.")
+        rotulo(bloco, descricao, F_NORMAL, SUAVE, bg=CARTAO, wraplength=820).pack(anchor="w", pady=(4, 10))
+        botoes = tk.Frame(bloco, bg=CARTAO)
+        botoes.pack(anchor="w")
+
+        def ligar():
+            if messagebox.askyesno(NOME_APP, RISCO + "\n\nVocê aceita esse risco e quer ligar a automação?",
+                                   icon="warning", parent=self.raiz):
+                self.executar("Ligar automação no LinkedIn", ["li", "automatico", "ligar", "--aceito-o-risco"])
+
+        if cfg.ativo:
+            Botao(botoes, "Entrar no LinkedIn", lambda: self.executar("Entrar no LinkedIn", ["li", "automatico", "entrar"]),
+                  "primario").pack(side="left")
+            Botao(botoes, "Testar busca agora", lambda: self.executar("Testar busca no LinkedIn",
+                                                                      ["li", "automatico", "testar"])).pack(side="left", padx=8)
+            Botao(botoes, "Desligar automação", lambda: self.executar("Desligar automação no LinkedIn",
+                                                                       ["li", "automatico", "desligar"]), "perigo").pack(side="left")
+        else:
+            Botao(botoes, "Ligar automação…", ligar, "perigo").pack(side="left")
+
+    def _candidatar_melhores(self) -> None:
+        from ..candidaturas import carregar_candidaturas
+        from ..configuracao import carregar_configuracao
+        from ..radar.modelos import carregar_base, carregar_config
+
+        central, config = carregar_configuracao(), carregar_config()
+        candidaturas = carregar_candidaturas()
+        restantes = estado.vagas_restantes_hoje(candidaturas, central.limites.candidaturas_por_dia)
+        escolhidas = estado.melhores_para_candidatar(carregar_base(), candidaturas, config.limiar_candidatar, restantes)
+        if restantes <= 0:
+            messagebox.showinfo(NOME_APP, f"Você já chegou ao limite de {central.limites.candidaturas_por_dia} "
+                                "candidaturas de hoje. Amanhã tem mais.", parent=self.raiz)
+            return
+        if not escolhidas:
+            messagebox.showinfo(NOME_APP, f"Nenhuma vaga com nota {config.limiar_candidatar} ou mais esperando "
+                                "candidatura. Busque vagas novas ou escolha uma na lista.", parent=self.raiz)
+            return
+        lista = "\n".join(f"• {l.nota} · {l.titulo} — {l.empresa}" for l in escolhidas)
+        if not messagebox.askyesno(NOME_APP, f"O agente vai preparar e preencher {len(escolhidas)} candidatura(s), uma "
+                                   f"de cada vez:\n\n{lista}\n\nEm cada uma ele para antes do envio: você confere e "
+                                   "clica em Enviar. Continuar?", parent=self.raiz):
+            return
+        self.executar(f"Candidatar às {len(escolhidas)} melhores", [["candidatar", l.id] for l in escolhidas])
 
     # ---------------------------------------------------------------- aprovações
 
@@ -1113,6 +1229,7 @@ class App:
 
     def _pagina_config(self, pai) -> None:
         from ..configuracao import carregar_configuracao
+        from ..operacao.credenciais import email_configurado
         from ..radar.modelos import carregar_config
 
         corpo = area_rolavel(pai)
@@ -1160,8 +1277,8 @@ class App:
              "Desligar" if sugestao else "Ligar",
              lambda: self.executar("Modo só sugestões", ["config", "sugestao", "--desligar" if sugestao else "--ligar"]),
              "secundario"),
-            ("Avisos por e-mail", f"Para onde o agente manda os avisos. Hoje: {central.notificacao.email_para or 'não definido'}.",
-             "Definir e-mail", self._email_avisos, "secundario"),
+            ("Vagas e avisos pelo e-mail", "O agente lê os alertas de vaga do seu e-mail e manda os avisos para ele. "
+             f"Hoje: {email_configurado() or 'não configurado'}.", "Configurar e-mail", self.configurar_email, "secundario"),
             ("Atalho na Área de Trabalho", "Recria o ícone do agente na sua Área de Trabalho.",
              "Criar atalho", self._criar_atalho, "secundario"),
             ("Pasta dos seus dados", "Onde ficam seu perfil, currículos gerados e relatórios. Nada disso vai para a internet.",
@@ -1181,16 +1298,6 @@ class App:
                       botao="Agendar")
         if r:
             self.executar("Agendar busca diária", ["vagas", "agendar", "--hora", r["hora"].strip() or "07:00"])
-
-    def _email_avisos(self) -> None:
-        from ..configuracao import carregar_configuracao
-
-        atual = carregar_configuracao().notificacao.email_para or ""
-        r = perguntar(self.raiz, "Avisos por e-mail", "O envio também precisa do servidor de e-mail configurado "
-                      "(veja o README, parte Notificações). Sem isso, os avisos ficam salvos na pasta de dados.",
-                      [("email", "Seu e-mail", "texto", None, atual, None)], botao="Salvar")
-        if r and r["email"].strip():
-            self.executar("Definir e-mail de avisos", ["config", "definir", "notificacao.email_para", r["email"].strip()])
 
     def _criar_atalho(self) -> None:
         try:

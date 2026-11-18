@@ -70,3 +70,19 @@ def linha_cron_semanal(diretorio_projeto: Path, uv: str, dia: str, hora: str) ->
     prefixo = f"AGENTE_CARREIRA_DATA='{dados}' " if dados else ""
     return (f"{int(m)} {int(h)} * * {DIAS_CRON[dia]} cd '{diretorio_projeto}' && {prefixo}'{uv}' run agente "
             "relatorio semanal --notificar >> data/relatorio.log 2>&1")
+
+
+def tarefa_agendada(nome: str = NOME_TAREFA, *, executar=None) -> bool | None:
+    """True/False se a tarefa existe no Agendador do Windows; None fora do Windows (não dá para saber)."""
+    import subprocess
+    import sys
+
+    if sys.platform != "win32":
+        return None
+    executar = executar or subprocess.run
+    try:
+        resultado = executar(["schtasks", "/Query", "/TN", nome], capture_output=True, text=True,
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except OSError:
+        return None
+    return resultado.returncode == 0

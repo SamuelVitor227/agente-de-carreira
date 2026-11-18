@@ -7,6 +7,7 @@ por tarefa. Credenciais nunca ficam aqui: só em variáveis de ambiente (RNF-01)
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 from typing import Literal
 from urllib.parse import urlparse
@@ -45,6 +46,9 @@ DOMINIOS_PLATAFORMA = {
 CAMINHOS_COM_COMANDO = {
     "vagas.buscas": "agente busca ...",
     "vagas.preferencias": "agente vagas feedback ...",
+    # Ligar exige aceitar o risco de forma explícita (RN-04).
+    "linkedin_automatico.ativo": "agente li automatico ligar --aceito-o-risco",
+    "linkedin_automatico.aceito_risco_em": "agente li automatico ligar --aceito-o-risco",
 }
 
 
@@ -71,8 +75,45 @@ class Notificacao(BaseModel):
     eventos: dict[str, bool] = Field(default_factory=lambda: {e: True for e in EVENTOS})
 
 
+class LinkedInAutomatico(BaseModel):
+    """Navegador automático no LinkedIn (RN-04: só por opção do usuário, ciente do risco). Desligado por padrão.
+
+    Limites e seletores ficam aqui, não no código (RNF-14): o LinkedIn muda de layout sem aviso.
+    """
+
+    ativo: bool = False
+    aceito_risco_em: datetime | None = None
+    consultas_por_rodada: int = 4            # páginas de busca abertas por rodada (RN-05)
+    vagas_por_consulta: int = 25
+    detalhes_por_rodada: int = 12            # vagas novas abertas para ler a descrição
+    intervalo_min_s: float = 4.0             # pausa aleatória entre páginas e ações
+    intervalo_max_s: float = 11.0
+    ultimas_horas: int = 24                  # só vagas publicadas nesse período
+    max_etapas_candidatura: int = 8
+    local_padrao: str = "Belo Horizonte, Minas Gerais, Brasil"
+    seletores_descricao: list[str] = Field(default_factory=lambda: [
+        "#job-details", ".jobs-description__content", ".jobs-box__html-content", ".description__text",
+    ])
+    botoes_candidatura: list[str] = Field(default_factory=lambda: ["Candidatura simplificada", "Easy Apply"])
+    botoes_avancar: list[str] = Field(default_factory=lambda: [
+        "Avançar", "Próximo", "Próxima", "Next", "Continuar", "Continue", "Revisar", "Review",
+    ])
+    botoes_enviar: list[str] = Field(default_factory=lambda: [
+        "Enviar candidatura", "Submit application", "Enviar", "Submit",
+    ])
+
+    @field_validator("intervalo_max_s")
+    @classmethod
+    def _intervalo(cls, valor: float, info) -> float:
+        minimo = info.data.get("intervalo_min_s", 0)
+        if valor < minimo:
+            raise ValueError("intervalo_max_s precisa ser maior ou igual a intervalo_min_s")
+        return valor
+
+
 class Configuracao(BaseModel):
     somente_sugestao: bool = False          # RF-OP-02
+    linkedin_automatico: LinkedInAutomatico = Field(default_factory=LinkedInAutomatico)
     motores: dict[str, str] = Field(default_factory=dict)  # RF-IA-01
     limites: Limites = Field(default_factory=Limites)
     horarios: Horarios = Field(default_factory=Horarios)

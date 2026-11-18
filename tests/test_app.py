@@ -164,8 +164,10 @@ def test_li_conectar_pela_janela(tmp_path):
 # ---------------------------------------------------------------- tela inicial e listas
 
 def test_primeiros_passos_e_proximo_passo():
-    passos = estado.primeiros_passos(tem_perfil=True, tem_linkedin=False, tem_busca=False, tem_vagas=False)
-    assert [p.feito for p in passos] == [True, False, False, False]
+    passos = estado.primeiros_passos(tem_perfil=True, tem_linkedin=False, tem_busca=False, tem_vagas=False,
+                                     tem_email=False, tem_agendamento=False)
+    assert [p.feito for p in passos] == [True, False, False, False, False, False]
+    assert [p.acao for p in passos][-2:] == ["buscar_vagas", "agendar_busca"]
     assert estado.proximo_passo(passos, {}, None).acao == "conectar_linkedin"
     prontos = estado.primeiros_passos(tem_perfil=True, tem_linkedin=True, tem_busca=True, tem_vagas=True)
     agora = datetime(2026, 11, 17, 12, tzinfo=timezone.utc)
