@@ -216,7 +216,8 @@ uv run agente vagas rodada               # coleta, triagem, aderência e resumo 
 uv run agente vagas link URL [--descricao vaga.txt]   # vaga a partir de um link seu
 uv run agente vagas resumo [--ia]        # resumo do dia; --ia prepara a justificativa escrita
 uv run agente vagas ver ID / feedback ID --interessa|--nao-interessa --motivo X / salvar ID / descartar ID
-uv run agente vagas agendar --hora 07:00 # rodada diária no Agendador do Windows
+uv run agente vagas agendar --hora 07:00 # rodada diária no Agendador do Windows (sem janela; roda ao ligar o PC se perdeu o horário)
+uv run agente copias / copias restaurar NOME   # cópias de segurança diárias dos dados (7 dias)
 uv run agente config                     # todas as preferências; altere com 'config definir CAMINHO VALOR'
 uv run agente config sugestao --ligar    # modo somente sugestão: nenhuma plataforma é tocada
 uv run agente fila / fila revisar        # fila única de aprovações (aprovar, editar, rejeitar)
@@ -253,6 +254,27 @@ Por padrão, o agente não entra na sua conta. Os dados do perfil vêm da export
 - **Desempenho:** até 20% da RAM (`desempenho.memoria_max_percentual`) vira tarefas em paralelo: descrições de sites diferentes lidas ao mesmo tempo (com pausa dentro de cada site), robots.txt consultado uma vez por site e o portal da Gupy rodando junto com o Outlook e o LinkedIn.
 - **Região:** presencial e híbrido só em Belo Horizonte e nos 34 municípios da região metropolitana ("BH e região", "Grande BH" e "RMBH" também valem); remoto vale de qualquer lugar. Vaga sem modelo informado conta como presencial, e vaga presencial sem local fica de fora (dá para conferir em "Todas").
 - `agente vagas reavaliar [--ler-descricoes N]` dá nota de novo às vagas guardadas com o perfil atual, por exemplo depois de mudar a formação.
+- **Busca automática:** a tarefa do Agendador roda sem janela de console. Se o PC estiver desligado ou suspenso no horário, ela roda assim que ele voltar, também na bateria. A tela Início mostra a última busca automática ("hoje às 07:02 ✓") e avisa quando ela não rodou ou terminou com erro. O registro fica em `data/rodada.log`.
+
+### Nota das vagas
+
+A nota (0 a 100) junta três partes, todas calculadas no seu computador:
+
+- **Tecnologias:** quantas das pedidas você tem. As obrigatórias pesam o dobro. O agente reconhece mais de 170 tecnologias, inclusive as que você não tem (SAP, Databricks, Salesforce...). Com pouca evidência, essa parte fica perto do meio: uma vaga que só cita "SQL" não vira 100% compatível.
+- **Texto:** quanto o anúncio se parece com o seu perfil.
+- **Cargo e nível:** se o título e o nível batem com as suas buscas (estágio ou júnior em desenvolvimento, por exemplo).
+
+Ainda entram o ajuste aprendido com o seu "Não tenho interesse" e um desconto de 10 pontos para anúncio em inglês quando o seu inglês é básico. Sem a descrição, a nota é estimada pelo título: aparece como "≈ 52", vai no máximo a 65 e não dispara alerta. Vaga exclusiva ou afirmativa (PcD, mulheres...) ganha um aviso para você decidir. O agente não guarda nada sobre você a esse respeito.
+
+### Tela de Vagas
+
+Abas **Recomendadas** (nota 50 ou mais), **Outras**, **Salvas** e **Todas**, com contagem. Há campo **Procurar**, filtros de modelo e de nível, ordenação clicando na coluna e a coluna "Encontrada". Clique numa vaga e o painel de baixo mostra a nota explicada (o que você tem, o que falta, se o cargo combina), os avisos e a descrição. "Salvar para depois" e "Não tenho interesse" acontecem na hora: a vaga sai da lista e o agente aprende. Com Ctrl ou Shift você escolhe várias vagas e se candidata a todas em sequência.
+
+### Seus dados ficam seguros
+
+- **Várias tarefas ao mesmo tempo:** cada gravação relê o arquivo e mantém o que outra tarefa mudou. Se você clicar "Não tenho interesse" enquanto a busca roda, a busca não desfaz isso no fim.
+- **Nada fica pela metade:** o arquivo novo é escrito ao lado e só então troca o antigo. "Parar" pede à tarefa que pare com calma (o navegador fecha as abas dela) e só força depois de 15 segundos. Fechar o app com tarefas rodando pergunta se você quer parar tudo ou deixar terminando.
+- **Cópias de segurança:** uma por dia, guardadas por 7 dias em `data/copias/`. Em Configurações → "Cópias de segurança" (ou `agente copias restaurar NOME`) você volta a um dia anterior; o estado atual fica guardado antes. Se um arquivo de dados estiver danificado, o agente volta sozinho para a última cópia boa e avisa.
 
 ### Currículo
 

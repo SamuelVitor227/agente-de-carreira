@@ -52,6 +52,26 @@ Os 92 requisitos funcionais da especificação estão implementados (M1 a M8). E
 | RF-EV-22 | **Atualização periódica pelo LinkedIn**: lembrar a cada 30 dias de baixar o ZIP do LinkedIn e mostrar o que mudou no perfil. | Lembrete mensal e comparação antes e depois ao importar. |
 | RF-EV-23 | **Instalador** para usar sem `uv` nem terminal (um clique), com atalho e navegador incluídos. | Um computador sem Python instala e abre o app pelo atalho. |
 
+## 6. Melhorias no que já existia (feitas em 18/11/2026)
+
+Revisão do produto pronto com os dados reais (116 vagas, a tarefa agendada e a gravação dos arquivos). IDs com o prefixo **RM** (melhoria).
+
+| ID | Melhoria | Situação |
+|----|----------|----------|
+| RM-01 | **Busca das 7h confiável.** Ela nunca tinha rodado: a última tentativa foi recusada pelo Windows, e uma busca perdida não era recuperada. Agora a tarefa é criada por XML: roda sem janela, recupera a busca perdida assim que o PC liga, funciona na bateria e para sozinha depois de 2 h. A tela Início mostra a última busca automática e avisa se ela não rodou. | Feito. **Falta você recriar a tarefa uma vez** (Configurações → "Busca automática todo dia" → Agendar). |
+| RM-02 | **Tarefas ao mesmo tempo sem perder nada.** Cada gravação relê o arquivo e junta as mudanças: a busca não desfaz o "Não tenho interesse" clicado no meio dela, nem as configurações mudadas enquanto roda. | Feito |
+| RM-03 | **Nada fica pela metade.** A gravação é atômica, e "Parar" pede à tarefa que pare com calma (fecha o navegador) antes de forçar. Fechar o app com tarefas rodando pergunta se é para parar tudo ou deixar terminando. | Feito |
+| RM-04 | **Cópias de segurança diárias** (7 dias), com restauração pelo app ou por `agente copias`. Arquivo danificado volta sozinho para a última cópia boa. | Feito |
+| RM-05 | **Nota das vagas recalibrada.** Antes, uma vaga de SAP que só citava "SQL" ficava em 1º (75) e estágios em TI sem descrição ficavam perto de 0. Agora entram um dicionário maior de tecnologias, cobertura com pouca evidência puxada para o meio, encaixe de cargo e nível, desconto para anúncio em inglês com inglês básico e nota estimada ("≈") quando não há descrição. | Feito |
+| RM-06 | **Aviso de vaga exclusiva ou afirmativa** (PcD, mulheres, pessoas negras...), sem eliminar e sem guardar nada sobre você. | Feito |
+| RM-07 | **Tela de Vagas nova:** abas Recomendadas e Outras, procurar, filtros, ordenação, coluna "Encontrada", painel de detalhes com a nota explicada e seleção de várias vagas. | Feito |
+| RM-08 | **Ações na hora**, sem janela de texto: salvar, "Não tenho interesse" (que agora tira a vaga da lista) e "Lembrete feito". | Feito |
+| RM-09 | **Resumo diário mais curto:** as vagas de nota baixa vão para uma lista no fim. | Feito |
+| RM-10 | **Início coerente:** "Vagas boas" usa o limiar de candidatura, e o passo do e-mail reconhece a leitura do Outlook pelo navegador. | Feito |
+| RM-11 | **Código dividido por área** (CLI em 5 módulos, uma classe por tela do app), com um teste que confere todas as importações. | Feito |
+
+Sobre o **RF-EV-19**: ele ficou mais urgente. A pasta do navegador do agente (`data/navegador`, com os logins do LinkedIn e do Outlook) também está dentro do OneDrive.
+
 ## Ordem sugerida
 
 1. RF-EV-06 (respostas prontas) e RF-EV-01 (retornos pelo Outlook): destravam as candidaturas e o funil.
