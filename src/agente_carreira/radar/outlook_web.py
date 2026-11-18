@@ -26,6 +26,7 @@ SELETOR_CORPO = '[role=document][aria-label="Corpo da mensagem"], [role=document
 NOMES_NAO_LIDO = ("Não lido", "Marcar como não lido", "Unread", "Mark as unread")
 PREFIXOS_NAO_LIDO = ("Não lidos", "Não lido", "Unread")
 ADAPTADOR = "email:outlook-web"
+USO_NAVEGADOR = "a leitura dos alertas de vaga no Outlook"
 
 Dormir = Callable[[float], None]
 
@@ -148,7 +149,7 @@ def leitor_da_rodada(consultas: list[str], saude, *, por_consulta: int = 15, abr
         if abrir_sessao is None and not playwright_disponivel():
             return [], ["Outlook: a leitura pelo navegador precisa do Playwright ('uv sync')"], []
         try:
-            with (abrir_sessao or SessaoNavegador)() as sessao:
+            with (abrir_sessao or SessaoNavegador)(**({} if abrir_sessao else {"uso": USO_NAVEGADOR})) as sessao:
                 mensagens, avisos = ler_alertas(sessao.pagina, consultas, ja_processados, por_consulta=por_consulta,
                                                 dormir=dormir)
         except NavegadorOcupado as erro:

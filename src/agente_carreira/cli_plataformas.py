@@ -310,7 +310,7 @@ def _cadastro_assistido(plataforma, pacote, tarefa, tarefas) -> Path | None:
         return None
     campos = [CampoParaPreencher(id=c.id, rotulo=c.rotulo, valor=c.valor, obrigatorio=c.obrigatorio, arquivo=c.id == "cv")
               for c in pacote.campos if not c.manual]
-    with SessaoNavegador() as sessao:
+    with SessaoNavegador(uso="o cadastro em uma plataforma") as sessao:
         sessao.pagina.goto(plataforma.url)
         console.print(Panel(
             "No navegador que abriu: crie a conta ou faça login, 2FA e CAPTCHA, aceite os termos e abra o formulário "
@@ -585,7 +585,7 @@ def plataformas_abrir(
         "clica em salvar ou enviar. CPF e senha são sempre seus.\n\nFeche o navegador quando terminar.",
         title=f"{plataforma.nome} com preenchimento automático", border_style="magenta"))
     try:
-        with SessaoNavegador() as sessao:
+        with SessaoNavegador(uso="o site de vagas com preenchimento automático") as sessao:
             sessao.pagina.goto(endereco, wait_until="domcontentloaded")
 
             def avisar(endereco_pagina: str, rotulos: list[str]) -> None:

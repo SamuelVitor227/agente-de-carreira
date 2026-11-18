@@ -63,7 +63,7 @@ def email_entrar() -> None:
         console.print("[red]O navegador do agente precisa do Playwright ('uv sync').[/red]")
         raise typer.Exit(1)
     try:
-        with SessaoNavegador() as sessao:
+        with SessaoNavegador(uso="o login no Outlook") as sessao:
             try:
                 caixa_aberta(sessao.pagina, espera_s=20)
                 console.print("[green]O navegador do agente já está logado no Outlook. Pode fechar esta janela.[/green]")
@@ -100,7 +100,7 @@ def email_testar() -> None:
 
     central = carregar_configuracao()
     try:
-        with SessaoNavegador() as sessao:
+        with SessaoNavegador(uso="o teste de leitura do Outlook") as sessao:
             mensagens, avisos = ler_alertas(sessao.pagina, central.email_navegador.consultas, set(), por_consulta=3)
     except (NavegadorOcupado, LoginOutlook) as erro:
         console.print(f"[yellow]{escape(str(erro))}[/yellow]")

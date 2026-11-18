@@ -144,9 +144,28 @@ def playwright_disponivel() -> bool:
 class NavegadorOcupado(Exception):
     """O navegador do agente já está aberto por outra tarefa (o perfil só aceita um uso por vez)."""
 
-    def __init__(self) -> None:
-        super().__init__("O navegador do agente já está aberto em outra tarefa (por exemplo, o login no LinkedIn ou "
-                         "outra busca). Espere ela terminar ou feche a janela do navegador do agente e tente de novo.")
+    def __init__(self, uso: str | None = None) -> None:
+        self.uso = uso
+        onde = f"aberto em: {uso}" if uso else "aberto em outra tarefa"
+        super().__init__(f"O navegador do agente já está {onde}. Feche aquela janela do navegador (ou espere a "
+                         "tarefa terminar) e tente de novo.")
+
+
+def _arquivo_dono() -> Path:
+    return diretorio_dados() / "navegador.dono"
+
+
+def uso_atual_do_navegador() -> str | None:
+    """O que está usando o navegador do agente agora (se o processo dono ainda existe)."""
+    import json
+
+    from .operacao.andamento import processo_vivo
+
+    try:
+        dono = json.loads(_arquivo_dono().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return dono.get("uso") if processo_vivo(int(dono.get("pid", 0))) else None
 
 
 class _Trava:
@@ -171,7 +190,7 @@ class _Trava:
                 fcntl.flock(arquivo.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError:
             arquivo.close()
-            raise NavegadorOcupado() from None
+            raise NavegadorOcupado(uso_atual_do_navegador()) from None
         self._arquivo = arquivo
 
     def soltar(self) -> None:
@@ -211,19 +230,29 @@ class SessaoNavegador:
     Um uso por vez: se outra tarefa estiver com o navegador aberto, levanta NavegadorOcupado.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, uso: str = "uma tarefa do agente") -> None:
+        self.uso = uso
         self._playwright = None
         self._contexto = None
         self._trava: _Trava | None = None
         self.pagina = None
 
     def __enter__(self) -> "SessaoNavegador":
+        import json
+        from datetime import datetime
+
         from playwright.sync_api import sync_playwright
 
         pasta = diretorio_dados() / PASTA_PERFIL_NAVEGADOR
         pasta.mkdir(parents=True, exist_ok=True)
         self._trava = _Trava(diretorio_dados() / "navegador.trava")
         self._trava.adquirir()
+        try:  # anota quem está usando, para o aviso de "navegador ocupado" dizer o quê
+            _arquivo_dono().write_text(json.dumps({"uso": self.uso, "pid": os.getpid(),
+                                                   "desde": datetime.now().isoformat(timespec="seconds")}),
+                                       encoding="utf-8")
+        except OSError:
+            pass
         try:
             self._playwright = sync_playwright().start()
             self._contexto = self._playwright.chromium.launch_persistent_context(str(pasta), headless=False)
@@ -244,5 +273,9 @@ class SessaoNavegador:
             if self._playwright is not None:
                 self._playwright.stop()
             if self._trava is not None:
+                try:
+                    _arquivo_dono().unlink(missing_ok=True)
+                except OSError:
+                    pass
                 self._trava.soltar()
             self._contexto = self._playwright = self._trava = None

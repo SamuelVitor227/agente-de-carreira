@@ -21,6 +21,7 @@ from .modelos import VagaBruta
 
 ORIGEM = "glassdoor:site"
 ADAPTADOR = "navegador:glassdoor"
+USO_NAVEGADOR = "a busca de vagas no Glassdoor"
 URL_BUSCA = "https://www.glassdoor.com.br/Job/jobs.htm"
 Dormir = Callable[[float], None]
 
@@ -141,7 +142,7 @@ def coletor_da_rodada(termos: list[str], local: str | None, saude, *, minutos_ve
         from ..navegador import NavegadorOcupado, SessaoNavegador, erro_curto, fechado_pela_pessoa
 
         try:
-            with (abrir_sessao or SessaoNavegador)() as sessao:
+            with (abrir_sessao or SessaoNavegador)(**({} if abrir_sessao else {"uso": USO_NAVEGADOR})) as sessao:
                 vagas, avisos = buscar(sessao.pagina, termos, local, minutos_verificacao=minutos_verificacao,
                                        avisar=avisar, dormir=dormir)
         except NavegadorOcupado as erro:

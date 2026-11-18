@@ -192,7 +192,7 @@ def _candidatura_no_site(link: str, cv: Path | None, perfil) -> None:
     from .preenchimento_auto import acompanhar, campo_curriculo, campos_basicos, dominio_raiz
 
     campos = campos_basicos(perfil) + ([campo_curriculo(cv)] if cv and cv.is_file() else [])
-    with SessaoNavegador() as sessao:
+    with SessaoNavegador(uso="a candidatura no site da vaga") as sessao:
         sessao.pagina.goto(link, wait_until="domcontentloaded")
         console.print(Panel(
             "A vaga abriu no navegador do agente. Entre na conta se o site pedir (login é seu) e clique em "
@@ -222,7 +222,7 @@ def _preencher_linkedin(link: str, central, cv: Path | None, perfil, contrato: s
                       "(reative em 'agente saude reativar assistido:linkedin').[/yellow]")
         return None
     responder = responder_com_perfil(perfil, carregar_respostas(), contrato)
-    with SessaoNavegador() as sessao:
+    with SessaoNavegador(uso="a candidatura no LinkedIn") as sessao:
         console.print("[magenta]Abrindo a vaga no LinkedIn, no navegador do agente…[/magenta]")
         resultado = None
         for tentativa in range(2):
@@ -283,7 +283,7 @@ def _preencher_assistido(kit, link: str, central, cv: Path | None = None, perfil
                for i, p in enumerate(kit.perguntas)]
     if cv is not None and cv.is_file():
         campos.append(CampoParaPreencher(id="cv", rotulo="Currículo", valor=str(cv), arquivo=True))
-    with SessaoNavegador() as sessao:
+    with SessaoNavegador(uso="o preenchimento assistido de uma candidatura") as sessao:
         sessao.pagina.goto(link)
         console.print(Panel("No navegador: faça login, 2FA e CAPTCHA (RN-03) e abra o formulário de candidatura. "
                             "Depois volte aqui: o agente preenche e anexa o currículo.", title="Modo assistido",

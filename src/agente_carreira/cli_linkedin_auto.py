@@ -80,7 +80,7 @@ def auto_entrar() -> None:
         console.print("[red]O navegador do agente precisa do Playwright: rode 'uv sync' e 'uv run playwright install chromium'.[/red]")
         raise typer.Exit(1)
     try:
-        with SessaoNavegador() as sessao:
+        with SessaoNavegador(uso="o login no LinkedIn") as sessao:
             console.print("Conferindo se o navegador do agente já está logado…")
             if esta_logado(sessao.pagina):
                 console.print("[green]O navegador do agente já está logado no LinkedIn. Pode fechar esta janela.[/green]")
@@ -113,7 +113,7 @@ def auto_testar() -> None:
         raise typer.Exit(1)
     cfg = central.linkedin_automatico.model_copy(update={"detalhes_por_rodada": 3, "consultas_por_rodada": 2})
     try:
-        with SessaoNavegador() as sessao:
+        with SessaoNavegador(uso="o teste de busca no LinkedIn") as sessao:
             resultado = buscar_vagas(sessao.pagina, central.vagas, cfg, set())
     except (LoginNecessario, NavegadorOcupado) as erro:
         console.print(f"[yellow]{escape(str(erro))}[/yellow]")

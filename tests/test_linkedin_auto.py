@@ -715,3 +715,20 @@ def test_curriculo_html_ats_e_competencias_agrupadas():
     assert "&lt;Souza&gt;" in pagina and "github.com/ana" in pagina and "https://" not in pagina
     assert "<table" not in pagina and "<img" not in pagina                # ATS: sem tabelas nem imagens
     assert "<b>Inglês</b> (intermediário)" in pagina
+
+
+def test_navegador_ocupado_diz_o_que_esta_usando(tmp_path):
+    import json
+    import os
+
+    from agente_carreira.navegador import NavegadorOcupado, _Trava, uso_atual_do_navegador
+    from agente_carreira.storage import diretorio_dados
+
+    (diretorio_dados() / "navegador.dono").write_text(json.dumps({"uso": "a candidatura no site da vaga",
+                                                                   "pid": os.getpid()}), encoding="utf-8")
+    assert uso_atual_do_navegador() == "a candidatura no site da vaga"
+    primeira, segunda = _Trava(diretorio_dados() / "navegador.trava"), _Trava(diretorio_dados() / "navegador.trava")
+    primeira.adquirir()
+    with pytest.raises(NavegadorOcupado, match="aberto em: a candidatura no site da vaga"):
+        segunda.adquirir()
+    primeira.soltar()

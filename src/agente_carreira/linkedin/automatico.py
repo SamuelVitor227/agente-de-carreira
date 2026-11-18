@@ -32,6 +32,7 @@ from ..radar.modelos import BuscaSalva, ConfigVagas, VagaBruta
 
 ORIGEM = "linkedin:navegador"
 ADAPTADOR = "navegador:linkedin"
+USO_NAVEGADOR = "a busca de vagas no LinkedIn"
 URL_BUSCA = "https://www.linkedin.com/jobs/search/"
 URL_LOGIN = "https://www.linkedin.com/login"
 URL_FEED = "https://www.linkedin.com/feed/"
@@ -342,7 +343,7 @@ def coletor_da_rodada(config: ConfigVagas, cfg: LinkedInAutomatico, saude, *, ab
             return [], ["LinkedIn: o navegador automático precisa do Playwright ('uv sync')"], []
         conhecidos = {v.link for v in base.itens if v.link} | {f.url for v in base.itens for f in v.fontes if f.url}
         try:
-            with (abrir_sessao or SessaoNavegador)() as sessao:
+            with (abrir_sessao or SessaoNavegador)(**({} if abrir_sessao else {"uso": USO_NAVEGADOR})) as sessao:
                 resultado = buscar_vagas(sessao.pagina, config, cfg, conhecidos, dormir=dormir)
         except NavegadorOcupado as erro:  # não é falha do LinkedIn: só fica para a próxima rodada
             return [], [f"LinkedIn não pesquisado nesta rodada: {erro}"], []
@@ -591,7 +592,7 @@ def enriquecedor_da_rodada(cfg: LinkedInAutomatico, saude, *, abrir_sessao=None,
 
         lidas = 0
         try:
-            with (abrir_sessao or SessaoNavegador)() as sessao:
+            with (abrir_sessao or SessaoNavegador)(**({} if abrir_sessao else {"uso": USO_NAVEGADOR})) as sessao:
                 for i, vaga in enumerate(alvo, 1):
                     andamento.etapa("LinkedIn: lendo a descrição das vagas dos alertas", i, len(alvo))
                     if i > 1:
