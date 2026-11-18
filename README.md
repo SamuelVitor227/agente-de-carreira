@@ -239,6 +239,18 @@ Por padrão, o agente não entra na sua conta. Os dados do perfil vêm da export
 
 `agente li automatico testar` faz uma busca de teste sem salvar nada, e `agente li automatico desligar` volta ao modo padrão.
 
+### De onde vêm as vagas
+
+- **Alertas por e-mail.** Pelo Outlook na web, no navegador do agente: `agente email entrar` (o login é seu), `agente email ligar`, `agente email testar`. A pesquisa do Outlook alcança Prioritário e Outros. O agente só lê, e os alertas não lidos continuam não lidos. Se preferir, a leitura também funciona por IMAP com senha de app (Gmail, Hotmail, Yahoo). Remetentes reconhecidos: LinkedIn, Indeed, Gupy, Vagas.com, ProgramaThor, GeekHunter e Glassdoor.
+- **Portal da Gupy (direto no site).** Ligado por padrão: cada rodada pesquisa no portal.gupy.io com termos gerais de TI e o primeiro cargo de cada busca, revezando por dia. Usa um navegador invisível, sem a sua conta, e respeita o robots.txt. Teste com `agente vagas gupy "estágio ti"`.
+- **LinkedIn (automação opcional)**, veja acima.
+- **Glassdoor:** só pelos alertas de e-mail. O site bloqueia robôs (verificação "Humans only"), e o agente não contorna verificações.
+- **Termos.** Além dos cargos de cada área, todas as buscas aceitam termos gerais de TI em início de carreira: estágio TI, trainee, desenvolvedor, programador, analista de TI, suporte etc. Variações como jr/júnior, estagiário/estágio e intern são unificadas.
+
+### Gupy com preenchimento automático
+
+`agente plataformas abrir gupy`, ou o botão "Abrir a Gupy" em Meu perfil, abre a Gupy no navegador do agente. Em qualquer formulário, o agente preenche nome, e-mail, telefone, cidade, estado, país e links. Ele só preenche campos vazios: nunca apaga o que você escreveu, nunca preenche CPF nem senha e nunca clica em salvar ou enviar.
+
 ### Candidatar às melhores
 
 No app, Vagas → "Candidatar às melhores" prepara de uma vez até 5 candidaturas: as vagas recomendadas de maior nota, sem indício de golpe e dentro do limite do dia. Em cada uma, o agente monta o kit, preenche no site (Gupy, LinkedIn com automação ligada etc.) e para na revisão. Você confere e clica em Enviar.

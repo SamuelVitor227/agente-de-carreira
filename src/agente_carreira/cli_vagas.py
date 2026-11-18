@@ -245,6 +245,13 @@ def vagas_rodada(
         leitores.append(leitor_da_rodada(central.email_navegador.consultas, saude,
                                          por_consulta=central.email_navegador.por_consulta))
     extras = []
+    if central.sites.gupy_portal and not sem_paginas and not central.somente_sugestao             and central.modos_plataforma.get("gupy") != "desligado":
+        from .radar.gupy_portal import coletor_da_rodada as coletor_gupy, termos_da_rodada
+        from .radar.modelos import PESQUISAS_GERAIS_LINKEDIN
+
+        termos = termos_da_rodada(config.buscas, PESQUISAS_GERAIS_LINKEDIN, central.sites.gupy_termos_por_rodada)
+        console.print(f"[magenta]Gupy: buscando no portal de vagas ({len(termos)} termo(s)).[/magenta]")
+        extras.append(coletor_gupy(config, termos, saude))
     auto = central.linkedin_automatico
     if auto.ativo and not sem_linkedin and not central.somente_sugestao             and central.modos_plataforma.get("linkedin") != "desligado":
         from .linkedin.automatico import coletor_da_rodada
@@ -688,3 +695,18 @@ def vagas_agendar(
     salvar_config(config)
     console.print(f"[green]Rodada agendada para {hora} todos os dias.[/green] Log em data/rodada.log. "
                   "O PC precisa estar ligado no horário (RNF-18).")
+
+
+@vagas_app.command("gupy")
+def vagas_gupy(termo: str = typer.Argument("estágio ti", help="O que pesquisar no portal da Gupy.")) -> None:
+    """Pesquisa agora no portal da Gupy e mostra as vagas (não salva nada)."""
+    from .radar.gupy_portal import NavegadorPublico, buscar
+
+    with NavegadorPublico() as abrir:
+        vagas, avisos = buscar(abrir, [termo])
+    console.print(f"[green]{len(vagas)} vaga(s) na Gupy para '{escape(termo)}':[/green]")
+    for v in vagas[:25]:
+        detalhes = " · ".join(x for x in (v.local, v.modelo, v.contrato, f"{v.publicada_em:%d/%m}" if v.publicada_em else None) if x)
+        console.print(f"• {escape(v.titulo)} — {escape(v.empresa or '?')} [dim]({escape(detalhes)})[/dim]")
+    for aviso in avisos:
+        console.print(f"[dim]{escape(aviso)}[/dim]")

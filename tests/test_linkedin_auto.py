@@ -500,3 +500,59 @@ def test_acompanha_so_os_dominios_da_plataforma(monkeypatch):
     total = pa.acompanhar(Contexto(), ["gupy.io"], [], ao_preencher=lambda u, r: avisos.append(u), dormir=_sem_pausa,
                           horas=0.001, intervalo_s=1)
     assert set(visitadas) == {"https://portal.gupy.io/candidato"} and total == len(visitadas) and avisos
+
+
+# ---------------------------------------------------------------- busca direta no portal da Gupy
+
+def _link_gupy(job_id: int, empresa: str = "empresa") -> str:
+    import base64
+
+    codigo = base64.b64encode(json.dumps({"jobId": job_id, "source": "gupy_portal"}).encode()).decode()
+    return f"https://{empresa}.gupy.io/job/{codigo}?jobBoardSource=gupy_portal"
+
+
+def test_cartao_do_portal_vira_vaga_com_link_normal_da_gupy():
+    from agente_carreira.radar import gupy_portal as gp
+
+    assert gp.id_da_vaga(_link_gupy(12805520)) == "12805520"
+    assert gp.id_da_vaga("https://x.gupy.io/jobs/987654") == "987654"
+    vaga = gp.cartao_para_vaga({"href": _link_gupy(12805520, "vagasagis"), "linhas": [
+        "Agis Distribuição", "Estágio - Infraestrutura TI", "Belo Horiz... - MG", "Híbrido", "Estágio",
+        "Também p/ PcD", "Publicada em: 17/11/2026"]})
+    assert vaga.link == "https://vagasagis.gupy.io/jobs/12805520" and vaga.fonte_origem == gp.ORIGEM
+    assert (vaga.empresa, vaga.titulo, vaga.local) == ("Agis Distribuição", "Estágio - Infraestrutura TI", "Belo Horizonte - MG")
+    assert (vaga.modelo, vaga.contrato, vaga.publicada_em) == ("hibrido", "estagio", date(2026, 11, 17))
+    assert gp.cartao_para_vaga({"href": "https://site.com/job/x", "linhas": ["a", "b"]}) is None
+
+
+def test_termos_da_gupy_revezam_e_respeitam_o_limite():
+    from agente_carreira.radar.gupy_portal import termos_da_rodada
+
+    buscas = [BuscaSalva(nome="a", cargos=["desenvolvedor .net"]), BuscaSalva(nome="b", cargos=["analista de dados"])]
+    hoje = termos_da_rodada(buscas, ["estágio TI", "trainee tecnologia"], 3, date(2026, 11, 18))
+    amanha = termos_da_rodada(buscas, ["estágio TI", "trainee tecnologia"], 3, date(2026, 11, 19))
+    assert len(hoje) == 3 and hoje != amanha
+    assert set(termos_da_rodada(buscas, ["estágio TI", "trainee tecnologia"], 10)) == {
+        "estágio TI", "trainee tecnologia", "desenvolvedor .net", "analista de dados"}
+
+
+def test_coletor_da_gupy_sem_conta_e_com_robots(monkeypatch):
+    from agente_carreira.radar import gupy_portal as gp
+
+    class Pagina:
+        def evaluate(self, _js):
+            return [{"href": _link_gupy(1234567), "linhas": ["Omega", "Estágio TI", "Contagem - MG", "Presencial"]}]
+
+    class Navegador:
+        def __enter__(self):
+            return lambda url: Pagina()
+
+        def __exit__(self, *exc):
+            return False
+    saude = RegistroSaude()
+    coletar = gp.coletor_da_rodada(ConfigVagas(), ["estágio ti"], saude, abrir_navegador=Navegador,
+                                   permite=lambda url: True, dormir=_sem_pausa)
+    vagas, avisos, falhas = coletar(BaseVagas())
+    assert [v.link for v in vagas] == ["https://empresa.gupy.io/jobs/1234567"] and falhas == []
+    bloqueado = gp.coletor_da_rodada(ConfigVagas(), ["x"], saude, abrir_navegador=Navegador, permite=lambda url: False)
+    assert "robots" in bloqueado(BaseVagas())[1][0]

@@ -123,10 +123,18 @@ class EmailNavegador(BaseModel):
     por_consulta: int = 15                   # alertas mais recentes abertos por remetente, por rodada
 
 
+class SitesVagas(BaseModel):
+    """Busca direta em sites de vagas, além dos alertas por e-mail."""
+
+    gupy_portal: bool = True                 # portal.gupy.io: público, robots.txt respeitado
+    gupy_termos_por_rodada: int = 5
+
+
 class Configuracao(BaseModel):
     somente_sugestao: bool = False          # RF-OP-02
     linkedin_automatico: LinkedInAutomatico = Field(default_factory=LinkedInAutomatico)
     email_navegador: EmailNavegador = Field(default_factory=EmailNavegador)
+    sites: SitesVagas = Field(default_factory=SitesVagas)
     motores: dict[str, str] = Field(default_factory=dict)  # RF-IA-01
     limites: Limites = Field(default_factory=Limites)
     horarios: Horarios = Field(default_factory=Horarios)
