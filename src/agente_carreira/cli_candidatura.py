@@ -360,8 +360,14 @@ def candidatar(
     usar_assistido = linkedin_automatico or (
         modo == "assistido" and not copiloto and vaga.link and not central.somente_sugestao and playwright_disponivel())
     if usar_assistido:
-        captura = _preencher_assistido(kit, vaga.link, central, cv=Path(arquivos[0]) if arquivos else None,
-                                       perfil=perfil, contrato=vaga.contrato)
+        from .navegador import NavegadorOcupado
+
+        try:
+            captura = _preencher_assistido(kit, vaga.link, central, cv=Path(arquivos[0]) if arquivos else None,
+                                           perfil=perfil, contrato=vaga.contrato)
+        except NavegadorOcupado as erro:
+            console.print(f"[yellow]{escape(str(erro))} Seguindo em copiloto.[/yellow]")
+            captura = None
         modo = "assistido" if captura is not None else modo
     if captura is None:
         console.print(Panel(

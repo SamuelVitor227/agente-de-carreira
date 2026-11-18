@@ -16,6 +16,7 @@ aria-label ou placeholder), com sinônimos configuráveis (RNF-14).
 
 from __future__ import annotations
 
+import os
 import re
 import time
 from collections.abc import Callable
@@ -140,28 +141,103 @@ def playwright_disponivel() -> bool:
     return True
 
 
+class NavegadorOcupado(Exception):
+    """O navegador do agente já está aberto por outra tarefa (o perfil só aceita um uso por vez)."""
+
+    def __init__(self) -> None:
+        super().__init__("O navegador do agente já está aberto em outra tarefa (por exemplo, o login no LinkedIn ou "
+                         "outra busca). Espere ela terminar ou feche a janela do navegador do agente e tente de novo.")
+
+
+class _Trava:
+    """Trava de arquivo entre processos: o app, a busca agendada e o terminal não abrem o perfil juntos."""
+
+    def __init__(self, caminho: Path) -> None:
+        self.caminho = caminho
+        self._arquivo = None
+
+    def adquirir(self) -> None:
+        self.caminho.parent.mkdir(parents=True, exist_ok=True)
+        arquivo = open(self.caminho, "a+b")  # noqa: SIM115 - fica aberto enquanto a sessão durar
+        try:
+            if os.name == "nt":
+                import msvcrt
+
+                arquivo.seek(0)
+                msvcrt.locking(arquivo.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(arquivo.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            arquivo.close()
+            raise NavegadorOcupado() from None
+        self._arquivo = arquivo
+
+    def soltar(self) -> None:
+        if self._arquivo is None:
+            return
+        try:
+            if os.name == "nt":
+                import msvcrt
+
+                self._arquivo.seek(0)
+                msvcrt.locking(self._arquivo.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(self._arquivo.fileno(), fcntl.LOCK_UN)
+        except OSError:
+            pass
+        finally:
+            self._arquivo.close()
+            self._arquivo = None
+
+
+def erro_curto(erro: BaseException, limite: int = 220) -> str:
+    """Primeira linha útil de um erro (o Playwright anexa o log inteiro do Chromium)."""
+    linha = next((l.strip() for l in str(erro).splitlines() if l.strip()), type(erro).__name__)
+    return linha if len(linha) <= limite else linha[:limite].rstrip() + "…"
+
+
 class SessaoNavegador:
-    """Navegador visível com perfil próprio em data/navegador: o login que você fizer fica salvo."""
+    """Navegador visível com perfil próprio em data/navegador: o login que você fizer fica salvo.
+
+    Um uso por vez: se outra tarefa estiver com o navegador aberto, levanta NavegadorOcupado.
+    """
 
     def __init__(self) -> None:
         self._playwright = None
         self._contexto = None
+        self._trava: _Trava | None = None
         self.pagina = None
 
     def __enter__(self) -> "SessaoNavegador":
         from playwright.sync_api import sync_playwright
 
-        self._playwright = sync_playwright().start()
         pasta = diretorio_dados() / PASTA_PERFIL_NAVEGADOR
         pasta.mkdir(parents=True, exist_ok=True)
-        self._contexto = self._playwright.chromium.launch_persistent_context(str(pasta), headless=False)
-        self.pagina = self._contexto.pages[0] if self._contexto.pages else self._contexto.new_page()
+        self._trava = _Trava(diretorio_dados() / "navegador.trava")
+        self._trava.adquirir()
+        try:
+            self._playwright = sync_playwright().start()
+            self._contexto = self._playwright.chromium.launch_persistent_context(str(pasta), headless=False)
+            self._contexto.set_default_navigation_timeout(45_000)
+            self.pagina = self._contexto.pages[0] if self._contexto.pages else self._contexto.new_page()
+        except Exception:
+            self.__exit__(None, None, None)
+            raise
         return self
 
     def __exit__(self, *exc) -> None:
         try:
             if self._contexto is not None:
                 self._contexto.close()
+        except Exception:  # noqa: BLE001 - a janela pode já ter sido fechada pela pessoa
+            pass
         finally:
             if self._playwright is not None:
                 self._playwright.stop()
+            if self._trava is not None:
+                self._trava.soltar()
+            self._contexto = self._playwright = self._trava = None

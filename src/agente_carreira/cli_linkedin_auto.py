@@ -74,21 +74,26 @@ def auto_desligar() -> None:
 def auto_entrar() -> None:
     """Abre o navegador do agente na tela de login do LinkedIn e espera você entrar (login, 2FA e CAPTCHA são seus)."""
     from .linkedin.automatico import esperar_login, esta_logado
-    from .navegador import SessaoNavegador, playwright_disponivel
+    from .navegador import NavegadorOcupado, SessaoNavegador, playwright_disponivel
 
     if not playwright_disponivel():
         console.print("[red]O navegador do agente precisa do Playwright: rode 'uv sync' e 'uv run playwright install chromium'.[/red]")
         raise typer.Exit(1)
-    with SessaoNavegador() as sessao:
-        if esta_logado(sessao.pagina):
-            console.print("[green]O navegador do agente já está logado no LinkedIn.[/green]")
-            return
-        console.print("Entre na sua conta no navegador que abriu. O agente espera até 10 minutos e não vê sua senha.")
-        if esperar_login(sessao.pagina):
-            console.print("[green]Pronto: login feito. O navegador do agente lembra dele nas próximas vezes.[/green]")
-        else:
-            console.print("[yellow]Não detectei o login. Tente de novo quando quiser.[/yellow]")
-            raise typer.Exit(1)
+    try:
+        with SessaoNavegador() as sessao:
+            console.print("Conferindo se o navegador do agente já está logado…")
+            if esta_logado(sessao.pagina):
+                console.print("[green]O navegador do agente já está logado no LinkedIn. Pode fechar esta janela.[/green]")
+                return
+            console.print("Entre na sua conta no navegador que abriu. O agente espera até 10 minutos e não vê sua senha.")
+            if esperar_login(sessao.pagina):
+                console.print("[green]Pronto: login feito. O navegador do agente lembra dele nas próximas vezes.[/green]")
+            else:
+                console.print("[yellow]Não detectei o login. Tente de novo quando quiser.[/yellow]")
+                raise typer.Exit(1)
+    except NavegadorOcupado as erro:
+        console.print(f"[yellow]{escape(str(erro))}[/yellow]")
+        raise typer.Exit(1)
 
 
 @auto_app.command("testar")
@@ -96,7 +101,7 @@ def auto_testar() -> None:
     """Faz uma busca agora, só para ver o que o agente encontra (não salva nada)."""
     from .configuracao import carregar_configuracao
     from .linkedin.automatico import LoginNecessario, buscar_vagas
-    from .navegador import SessaoNavegador, playwright_disponivel
+    from .navegador import NavegadorOcupado, SessaoNavegador, playwright_disponivel
     from .operacao.saude import LayoutMudou
 
     central = carregar_configuracao()
@@ -110,7 +115,7 @@ def auto_testar() -> None:
     try:
         with SessaoNavegador() as sessao:
             resultado = buscar_vagas(sessao.pagina, central.vagas, cfg, set())
-    except LoginNecessario as erro:
+    except (LoginNecessario, NavegadorOcupado) as erro:
         console.print(f"[yellow]{escape(str(erro))}[/yellow]")
         raise typer.Exit(1)
     except LayoutMudou as erro:

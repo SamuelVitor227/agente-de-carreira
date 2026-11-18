@@ -348,3 +348,61 @@ def test_melhores_respeitam_nota_golpe_aplicadas_e_limite_do_dia():
     assert [l.id for l in escolhidas] == ["v90", "v85", "v80", "v75", "v72"]     # lote de no máximo 5
     assert [l.id for l in estado.melhores_para_candidatar(base, candidaturas, 70, 2)] == ["v90", "v85"]
     assert estado.melhores_para_candidatar(base, candidaturas, 70, 0) == []
+
+
+# ---------------------------------------------------------------- um uso por vez e erros curtos
+
+def test_trava_impede_dois_usos_do_navegador(tmp_path):
+    from agente_carreira.navegador import NavegadorOcupado, _Trava
+
+    primeira, segunda = _Trava(tmp_path / "navegador.trava"), _Trava(tmp_path / "navegador.trava")
+    primeira.adquirir()
+    with pytest.raises(NavegadorOcupado, match="já está aberto"):
+        segunda.adquirir()
+    primeira.soltar()
+    segunda.adquirir()                                                          # liberada, a próxima consegue
+    segunda.soltar()
+
+
+def test_navegador_ocupado_na_rodada_vira_aviso_sem_falha(monkeypatch):
+    from agente_carreira.navegador import NavegadorOcupado
+
+    class Ocupado:
+        def __enter__(self):
+            raise NavegadorOcupado()
+
+        def __exit__(self, *exc):
+            return False
+    saude = RegistroSaude()
+    brutas, avisos, falhas = auto.coletor_da_rodada(ConfigVagas(buscas=[BuscaSalva(nome="x", cargos=["dev"])]), RAPIDO,
+                                                    saude, abrir_sessao=Ocupado)(BaseVagas())
+    assert brutas == [] and falhas == [] and "não pesquisado" in avisos[0]
+    assert saude.obter(auto.ADAPTADOR).falhas_seguidas == 0 and saude.pode_usar(auto.ADAPTADOR)
+
+
+def test_erro_curto_corta_o_log_do_chromium():
+    from agente_carreira.navegador import erro_curto
+
+    erro = RuntimeError("BrowserType.launch_persistent_context: Target closed\nBrowser logs:\n--disable-x\n" + "y" * 900)
+    assert erro_curto(erro) == "BrowserType.launch_persistent_context: Target closed"
+
+
+def test_login_detectado_em_qualquer_aba():
+    class Aba:
+        def __init__(self, url):
+            self.url = url
+
+        def is_closed(self):
+            return False
+
+    class Contexto:
+        pages = [Aba("https://www.linkedin.com/login"), Aba("https://www.linkedin.com/feed/")]
+
+    class Pagina:
+        context = Contexto()
+
+        def goto(self, *a, **k):
+            pass
+    assert auto.esperar_login(Pagina(), minutos=1, dormir=_sem_pausa) is True
+    Contexto.pages = [Aba("https://www.linkedin.com/checkpoint/challenge")]
+    assert auto.esperar_login(Pagina(), minutos=1, dormir=_sem_pausa) is False

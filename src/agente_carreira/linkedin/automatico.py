@@ -64,26 +64,41 @@ def checar_pagina(pagina) -> None:
                               "navegador do agente ('agente li automatico entrar') e tente de novo.")
 
 
+_LOGADO = ("/feed", "/jobs", "/in/", "/mynetwork", "/messaging", "/notifications")
+
+
+def _url_logada(url: str) -> bool:
+    url = (url or "").lower()
+    return "linkedin.com" in url and any(p in url for p in _LOGADO) and not any(
+        p in url for p in ("/login", "/checkpoint", "/authwall", "/uas/"))
+
+
 def esta_logado(pagina, dormir: Dormir = time.sleep) -> bool:
-    pagina.goto(URL_FEED, wait_until="domcontentloaded")
-    dormir(2)
+    """Abre o feed: se o LinkedIn não mandar para o login, a sessão vale. Nunca trava (tempo limite)."""
     try:
-        checar_pagina(pagina)
-    except LoginNecessario:
+        pagina.goto(URL_FEED, wait_until="domcontentloaded", timeout=30_000)
+    except Exception:  # noqa: BLE001 - sem rede ou página lenta: trata como não logado
         return False
-    return "linkedin.com" in (pagina.url or "")
+    dormir(2)
+    return _url_logada(pagina.url)
 
 
 def esperar_login(pagina, minutos: int = 10, dormir: Dormir = time.sleep) -> bool:
-    """Abre a tela de login e espera você entrar (login, 2FA e CAPTCHA são seus)."""
-    pagina.goto(URL_LOGIN, wait_until="domcontentloaded")
+    """Abre a tela de login e espera você entrar em qualquer aba (login, 2FA e CAPTCHA são seus)."""
+    try:
+        pagina.goto(URL_LOGIN, wait_until="domcontentloaded", timeout=30_000)
+    except Exception:  # noqa: BLE001 - a pessoa ainda pode entrar pela aba aberta
+        pass
     for _ in range(minutos * 30):
         dormir(2)
-        url = (pagina.url or "").lower()
-        if "linkedin.com" in url and any(p in url for p in ("/feed", "/jobs", "/in/", "/mynetwork")):
-            return True
-        if pagina.is_closed():
+        try:
+            abertas = [p for p in pagina.context.pages if not p.is_closed()]
+        except Exception:  # noqa: BLE001 - navegador fechado pela pessoa
             return False
+        if not abertas:
+            return False
+        if any(_url_logada(p.url) for p in abertas):
+            return True
     return False
 
 
@@ -219,6 +234,11 @@ def ler_detalhe(pagina, vaga: VagaBruta, cfg: LinkedInAutomatico, dormir: Dormir
             if alvo.count():
                 dados["descricao"] = alvo.first.inner_text().strip()
                 break
+    if not dados.get("empresa") and not vaga.empresa:
+        # O título da aba é "Cargo | Empresa | LinkedIn".
+        partes = [p.strip() for p in (pagina.title() or "").split("|")]
+        if len(partes) >= 3 and partes[-1].lower() == "linkedin" and partes[-2]:
+            dados["empresa"] = partes[-2]
     campos = {k: v for k, v in dados.items() if k in VagaBruta.model_fields and k not in ("fonte_tipo", "fonte_origem", "link")}
     return vaga.model_copy(update={k: v for k, v in campos.items() if not getattr(vaga, k, None) or k == "descricao"})
 
@@ -276,7 +296,7 @@ def coletor_da_rodada(config: ConfigVagas, cfg: LinkedInAutomatico, saude, *, ab
     def coletar(base) -> tuple[list[VagaBruta], list[str], list[str]]:
         if not saude.pode_usar(ADAPTADOR):
             return [], [f"{ADAPTADOR}: parado após erro (agente saude reativar {ADAPTADOR})"], []
-        from ..navegador import SessaoNavegador, playwright_disponivel
+        from ..navegador import NavegadorOcupado, SessaoNavegador, erro_curto, playwright_disponivel
 
         if abrir_sessao is None and not playwright_disponivel():
             return [], ["LinkedIn: o navegador automático precisa do Playwright ('uv sync')"], []
@@ -284,6 +304,8 @@ def coletor_da_rodada(config: ConfigVagas, cfg: LinkedInAutomatico, saude, *, ab
         try:
             with (abrir_sessao or SessaoNavegador)() as sessao:
                 resultado = buscar_vagas(sessao.pagina, config, cfg, conhecidos, dormir=dormir)
+        except NavegadorOcupado as erro:  # não é falha do LinkedIn: só fica para a próxima rodada
+            return [], [f"LinkedIn não pesquisado nesta rodada: {erro}"], []
         except LoginNecessario as erro:
             saude.falha(ADAPTADOR, str(erro))
             return [], [f"LinkedIn: {erro}"], [f"LinkedIn: {erro}"]
@@ -291,8 +313,8 @@ def coletor_da_rodada(config: ConfigVagas, cfg: LinkedInAutomatico, saude, *, ab
             parou = saude.falha(ADAPTADOR, str(erro), parar=True)
             return [], [f"LinkedIn: {erro}"], [f"{ADAPTADOR}: {erro}"] if parou else []
         except Exception as erro:  # noqa: BLE001 - a busca no LinkedIn não derruba a rodada
-            saude.falha(ADAPTADOR, f"{type(erro).__name__}: {erro}")
-            return [], [f"LinkedIn: {type(erro).__name__}: {erro}"], []
+            saude.falha(ADAPTADOR, erro_curto(erro))
+            return [], [f"LinkedIn: {erro_curto(erro)}"], []
         saude.sucesso(ADAPTADOR)
         return resultado.vagas, resultado.avisos, []
 

@@ -92,6 +92,7 @@ class LinkedInAutomatico(BaseModel):
     max_etapas_candidatura: int = 8
     local_padrao: str = "Belo Horizonte, Minas Gerais, Brasil"
     seletores_descricao: list[str] = Field(default_factory=lambda: [
+        "[id^='JobDetails_AboutTheJob']",  # layout de 2026 (página da vaga com login)
         "#job-details", ".jobs-description__content", ".jobs-box__html-content", ".description__text",
     ])
     botoes_candidatura: list[str] = Field(default_factory=lambda: ["Candidatura simplificada", "Easy Apply"])
