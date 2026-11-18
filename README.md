@@ -301,6 +301,7 @@ Os dados ficam em `data/perfil-mestre.json` (fora do git), configurável pela va
 
 ## Documentação
 
+- [Próximos requisitos](docs/PROXIMOS_REQUISITOS.md): a fase seguinte (RF-EV-01 a RF-EV-23), com prioridade e critério de aceite.
 - [Especificação de Requisitos](<docs/Agente de Carreira — Especificação de Requisitos.pdf>) — documento completo *Agente de Carreira — Especificação de Requisitos* (versão de 16/11/2026), a fonte da verdade do projeto.
 
 ## Decisões em aberto
