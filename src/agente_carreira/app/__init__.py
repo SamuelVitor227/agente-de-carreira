@@ -33,6 +33,12 @@ def preparar_ambiente() -> None:
 
 def main() -> None:
     preparar_ambiente()
+    try:
+        from ..copias import garantir_copia_do_dia
+
+        garantir_copia_do_dia()  # a primeira vez no dia guarda uma cópia dos dados (7 dias)
+    except OSError:
+        pass
     from .janela import abrir_janela
 
     abrir_janela()

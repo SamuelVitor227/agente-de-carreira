@@ -20,6 +20,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
+from .arquivos import gravar_modelo, ler_modelo
 from .configuracao import OPCOES_MOTOR, Configuracao, carregar_configuracao, salvar_configuracao  # noqa: F401
 from .models import PerfilMestre
 from .storage import diretorio_dados
@@ -164,15 +165,12 @@ class UsosIA(BaseModel):
 
 def carregar_usos() -> UsosIA:
     caminho = diretorio_dados() / ARQUIVO_USOS
-    if not caminho.is_file():
-        return UsosIA()
-    return UsosIA.model_validate_json(caminho.read_text(encoding="utf-8"))
+    return ler_modelo(caminho, UsosIA)
 
 
 def salvar_usos(usos: UsosIA) -> Path:
     caminho = diretorio_dados() / ARQUIVO_USOS
-    caminho.parent.mkdir(parents=True, exist_ok=True)
-    caminho.write_text(usos.model_dump_json(indent=2), encoding="utf-8")
+    gravar_modelo(caminho, usos)
     return caminho
 
 

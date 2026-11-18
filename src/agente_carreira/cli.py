@@ -2161,6 +2161,9 @@ app.add_typer(email_app, name="email")
 from .cli_vagas import andamento_cmd  # noqa: E402
 
 app.command("andamento")(andamento_cmd)
+from .cli_copias import copias_app  # noqa: E402
+
+app.add_typer(copias_app, name="copias")
 
 
 @app.command("app")
@@ -2432,8 +2435,13 @@ def ia_log(tarefa: str | None = typer.Option(None, "--tarefa", help="Filtra por 
 
 def main() -> None:
     """Ponto de entrada do comando 'agente': sem perfil-mestre, orienta em vez de mostrar traceback."""
+    from .copias import garantir_copia_do_dia
     from .storage import PerfilAusente
 
+    try:
+        garantir_copia_do_dia()  # a primeira vez no dia guarda uma cópia dos dados (7 dias)
+    except OSError:
+        pass
     try:
         app()
     except PerfilAusente as erro:

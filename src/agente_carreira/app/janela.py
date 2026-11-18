@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 import queue
 import sys
+import threading
+import time
 import tkinter as tk
 import webbrowser
 from tkinter import filedialog, messagebox, ttk
@@ -39,6 +41,8 @@ F_TITULO = (FONTE, 20, "bold")
 F_SUBTITULO = (FONTE, 13, "bold")
 F_NUMERO = (FONTE, 24, "bold")
 F_SAIDA = ("Consolas", 10)
+
+ESPERA_PARAR_MS = 15_000  # depois do pedido de parar, quanto esperar antes de encerrar a tarefa à força
 
 URL_EXPORTACAO_LINKEDIN = "https://www.linkedin.com/mypreferences/d/download-my-data"
 COMO_EXPORTAR_LINKEDIN = (
@@ -198,6 +202,31 @@ def perguntar(pai, titulo, explicacao, campos, botao="Continuar") -> dict | None
     return Formulario(pai, titulo, explicacao, campos, botao).resultado
 
 
+def escolher(pai, titulo: str, explicacao: str, opcoes: list[tuple[str, str, str]]) -> str | None:
+    """Janela com uma explicação e um botão por opção (valor, texto, tipo). Devolve o valor (None = fechou)."""
+    janela = tk.Toplevel(pai)
+    janela.title(NOME_APP)
+    janela.configure(bg=FUNDO, padx=24, pady=20)
+    janela.transient(pai)
+    janela.resizable(False, False)
+    escolha: list[str | None] = [None]
+    rotulo(janela, titulo, F_SUBTITULO).pack(anchor="w")
+    rotulo(janela, explicacao, F_NORMAL, SUAVE, wraplength=480).pack(anchor="w", pady=(6, 16))
+    botoes = tk.Frame(janela, bg=FUNDO)
+    botoes.pack(fill="x")
+
+    def definir(valor: str) -> None:
+        escolha[0] = valor
+        janela.destroy()
+
+    for valor, texto, tipo in opcoes:
+        Botao(botoes, texto, lambda v=valor: definir(v), tipo).pack(side="left", padx=(0, 8))
+    janela.bind("<Escape>", lambda _e: janela.destroy())
+    janela.grab_set()
+    janela.wait_window(janela)
+    return escolha[0]
+
+
 # ---------------------------------------------------------------- janela de execução
 
 class JanelaExecucao(tk.Toplevel):
@@ -206,7 +235,7 @@ class JanelaExecucao(tk.Toplevel):
     def __init__(self, app: "App", titulo: str, args: list[str] | list[list[str]],
                  ao_fim: Callable[[int], None] | None = None) -> None:
         super().__init__(app.raiz)
-        self.app, self.ao_fim = app, ao_fim
+        self.app, self.ao_fim, self.titulo = app, ao_fim, titulo
         # Um comando, ou vários em sequência na mesma janela (ex.: uma busca por área).
         self._comandos = [list(c) for c in args] if args and isinstance(args[0], list) else [list(args)]
         self._pior = 0
@@ -219,7 +248,9 @@ class JanelaExecucao(tk.Toplevel):
         self._ansi = LeitorAnsi()
         self._pergunta: Pergunta | None = None
         self._rodando = True
+        self._parando = False
         self._giro = 0
+        self._trava_entrada = threading.Lock()  # a janela e a linha de leitura escrevem na entrada do processo
 
         topo = tk.Frame(self, bg=FUNDO, padx=20, pady=14)
         topo.pack(fill="x")
@@ -253,10 +284,13 @@ class JanelaExecucao(tk.Toplevel):
         self.after(40, self._processar)
         self.after(200, self._animar)
 
+    @property
+    def rodando(self) -> bool:
+        return self._rodando
+
     def _iniciar_proximo(self) -> None:
         """Cada comando roda num processo próprio: várias janelas do app trabalham ao mesmo tempo."""
         import subprocess
-        import threading
 
         args = self._comandos.pop(0)
         venv = scripts_do_venv() / ("python.exe" if sys.platform == "win32" else "python")
@@ -289,13 +323,44 @@ class JanelaExecucao(tk.Toplevel):
             self._fila.put(("pergunta", pergunta))
             pergunta.pronta.wait()
             resposta = {"cancelar": True} if pergunta.cancelada else {"valor": pergunta.resposta}
-            try:
-                processo.stdin.write(json.dumps(resposta, ensure_ascii=False) + "\n")
-                processo.stdin.flush()
-            except OSError:
-                break
+            self._enviar(processo, json.dumps(resposta, ensure_ascii=False))
         codigo = processo.wait()
         self._fila.put(("fim", 130 if getattr(self, "_parado", False) else codigo))
+
+    def _enviar(self, processo, linha: str) -> None:
+        with self._trava_entrada:
+            try:
+                processo.stdin.write(linha + "\n")
+                processo.stdin.flush()
+            except (OSError, ValueError):
+                pass  # o processo já terminou
+
+    def parar(self) -> None:
+        """Pede à tarefa que pare com calma (fecha o navegador e não deixa arquivo pela metade).
+
+        Se ela não parar em 15 segundos (ex.: no meio de uma pausa longa), é encerrada à força.
+        """
+        from .filho import PEDIDO_PARAR
+
+        processo = getattr(self, "_processo", None)
+        if not self._rodando or self._parando:
+            return
+        self._parando = self._parado = True
+        self._comandos.clear()
+        self._status.configure(text="Parando com segurança…", fg=ATENCAO)
+        self._fechar.configure(text="Parando…")
+        pergunta, self._pergunta = self._pergunta, None
+        self._area_pergunta.pack_forget()
+        if processo is not None and processo.poll() is None:
+            self._enviar(processo, PEDIDO_PARAR)
+        if pergunta is not None:
+            pergunta.cancelar()
+        self.after(ESPERA_PARAR_MS, self._forcar_parada)
+
+    def _forcar_parada(self) -> None:
+        processo = getattr(self, "_processo", None)
+        if processo is not None and processo.poll() is None:
+            processo.terminate()
 
     # -- saída
     def _escrever(self, texto: str) -> None:
@@ -327,7 +392,7 @@ class JanelaExecucao(tk.Toplevel):
     def _animar(self) -> None:
         if not self._rodando or not self.winfo_exists():
             return
-        if self._pergunta is None:
+        if self._pergunta is None and not self._parando:
             self._giro = (self._giro + 1) % 4
             self._status.configure(text="Trabalhando" + "." * self._giro, fg=SUAVE)
         self.after(350, self._animar)
@@ -413,19 +478,12 @@ class JanelaExecucao(tk.Toplevel):
         if not self._rodando:
             self.destroy()
             return
-        if self._pergunta is not None:
-            if messagebox.askyesno(NOME_APP, "Cancelar esta tarefa? O que já foi feito fica salvo.", parent=self):
-                pergunta, self._pergunta = self._pergunta, None
-                self._area_pergunta.pack_forget()
-                pergunta.cancelar()
+        if self._parando:
             return
-        if messagebox.askyesno(NOME_APP, "Ainda trabalhando. Parar esta tarefa agora? O que já foi feito fica salvo.",
-                               parent=self):
-            self._parado = True
-            self._comandos.clear()
-            processo = getattr(self, "_processo", None)
-            if processo is not None and processo.poll() is None:
-                processo.terminate()
+        texto = ("Cancelar esta tarefa? O que já foi feito fica salvo." if self._pergunta is not None else
+                 "Ainda trabalhando. Parar esta tarefa agora? O que já foi feito fica salvo.")
+        if messagebox.askyesno(NOME_APP, texto, parent=self):
+            self.parar()
 
 
 # ---------------------------------------------------------------- app
@@ -497,9 +555,44 @@ class App:
         self._faixa_giro = 0
         self.conteudo = tk.Frame(direita, bg=FUNDO)
         self.conteudo.pack(fill="both", expand=True)
+        self._janelas: list[JanelaExecucao] = []
+        self.raiz.protocol("WM_DELETE_WINDOW", self._ao_fechar_app)
         self.pagina_atual = "inicio"
         self.mostrar("inicio")
         self.raiz.after(400, self._atualizar_faixa)
+
+    # -- fechar o app com tarefas rodando
+    def tarefas_rodando(self) -> list[JanelaExecucao]:
+        self._janelas = [j for j in self._janelas if j.winfo_exists()]
+        return [j for j in self._janelas if j.rodando]
+
+    def _ao_fechar_app(self) -> None:
+        rodando = self.tarefas_rodando()
+        if not rodando:
+            self.raiz.destroy()
+            return
+        nomes = ", ".join(j.titulo for j in rodando)
+        escolha = escolher(self.raiz, "Ainda há tarefas rodando",
+                           f"{len(rodando)} tarefa(s) em andamento: {nomes}.\n\n"
+                           "Parar e sair: o agente para tudo com segurança (o navegador fecha e nada fica pela "
+                           "metade).\nDeixar terminando: o app fecha e as tarefas continuam sozinhas; o que elas "
+                           "mostrariam vai para data/app/tarefas-em-segundo-plano.log, e perguntas que aparecerem "
+                           "são canceladas.",
+                           [("parar", "Parar e sair", "primario"), ("deixar", "Deixar terminando e sair", "secundario"),
+                            ("voltar", "Voltar", "link")])
+        if escolha == "parar":
+            for janela in rodando:
+                janela.parar()
+            self.raiz.title(f"{NOME_APP} — parando as tarefas…")
+            self._sair_quando_pararem(time.monotonic() + ESPERA_PARAR_MS / 1000 + 5)
+        elif escolha == "deixar":
+            self.raiz.destroy()
+
+    def _sair_quando_pararem(self, limite: float) -> None:
+        if not self.tarefas_rodando() or time.monotonic() > limite:
+            self.raiz.destroy()
+            return
+        self.raiz.after(200, lambda: self._sair_quando_pararem(limite))
 
     # -- navegação
     def mostrar(self, pagina: str) -> None:
@@ -528,7 +621,7 @@ class App:
             self.atualizar()
             if codigo == 0 and depois:
                 depois()
-        JanelaExecucao(self, titulo, args, ao_fim=ao_fim)
+        self._janelas.append(JanelaExecucao(self, titulo, args, ao_fim=ao_fim))
 
     def abrir_pasta(self, pasta) -> None:
         pasta.mkdir(parents=True, exist_ok=True)
@@ -752,8 +845,29 @@ class App:
         rodape = tk.Frame(corpo, bg=FUNDO)
         rodape.pack(fill="x", padx=32, pady=(10, 26))
         quando = inicio.ultima_busca.astimezone().strftime("%d/%m às %H:%M") if inicio.ultima_busca else "nunca"
-        rotulo(rodape, f"Última busca de vagas: {quando}", F_NORMAL, SUAVE).pack(side="left")
-        Botao(rodape, "Buscar vagas agora", lambda: self.acao("buscar_vagas")).pack(side="right")
+        textos = tk.Frame(rodape, bg=FUNDO)
+        textos.pack(side="left", fill="x", expand=True)
+        rotulo(textos, f"Última busca de vagas: {quando}", F_NORMAL, SUAVE).pack(anchor="w")
+        automatica = inicio.busca_automatica
+        if automatica is not None:
+            linha = tk.Frame(textos, bg=FUNDO)
+            linha.pack(anchor="w", fill="x", pady=(2, 0))
+            rotulo(linha, ("⚠ " if automatica.problema else "") + automatica.texto, F_NORMAL,
+                   ATENCAO if automatica.problema else SUAVE, wraplength=640).pack(side="left")
+            if automatica.problema:
+                Botao(linha, "Ver o registro", self._abrir_registro_busca, "link").pack(side="left", padx=8)
+        Botao(rodape, "Buscar vagas agora", lambda: self.acao("buscar_vagas")).pack(side="right", anchor="n")
+
+    def _abrir_registro_busca(self) -> None:
+        from ..storage import diretorio_dados
+
+        registro = diretorio_dados() / "rodada.log"
+        if registro.is_file() and hasattr(os, "startfile"):
+            os.startfile(registro)
+        else:
+            messagebox.showinfo(NOME_APP, "A busca automática ainda não deixou registro: ela não chegou a rodar.\n\n"
+                                "Para recriá-la, vá em Configurações > \"Busca automática todo dia\" > Agendar.",
+                                parent=self.raiz)
 
     # ---------------------------------------------------------------- vagas
 
@@ -1329,8 +1443,11 @@ class App:
         grade = self._grade(corpo, 2)
         sugestao = central.somente_sugestao
         itens = [
-            ("Busca automática todo dia", "O agente procura vagas sozinho todo dia de manhã e manda o resumo até as 8h.",
+            ("Busca automática todo dia", "O agente procura vagas sozinho todo dia de manhã, sem abrir janela. Se o PC "
+             "estiver desligado no horário, a busca roda assim que ele ligar.",
              "Agendar", self._agendar_busca, "secundario"),
+            ("Cópias de segurança", "Uma cópia dos seus dados por dia, guardada por 7 dias. Se algo der errado, "
+             "volte para um dia anterior.", "Ver cópias", self._copias_seguranca, "secundario"),
             ("Relatório toda semana", "Um resumo da semana no domingo à noite.",
              "Agendar", lambda: self.executar("Agendar relatório semanal", ["relatorio", "agendar"]), "secundario"),
             ("Modo só sugestões: " + ("LIGADO" if sugestao else "desligado"),
@@ -1353,8 +1470,54 @@ class App:
             self._cartao_acao(grade, titulo, descricao, botao, comando, i // 2, i % 2, tipo)
         tk.Frame(corpo, bg=FUNDO, height=20).pack()
 
+    def _copias_seguranca(self) -> None:
+        from .. import copias
+        from ..operacao import andamento
+
+        copias.garantir_copia_do_dia()
+        janela = tk.Toplevel(self.raiz)
+        janela.title(f"Cópias de segurança — {NOME_APP}")
+        janela.configure(bg=FUNDO, padx=24, pady=20)
+        janela.transient(self.raiz)
+        rotulo(janela, "Cópias de segurança", F_SUBTITULO).pack(anchor="w")
+        rotulo(janela, "O agente guarda uma cópia dos seus dados (perfil, vagas, candidaturas, configurações) por dia, "
+               "por 7 dias. Restaurar volta tudo para aquele dia; o estado de agora fica guardado antes, numa cópia "
+               "\"antes da restauração\".", F_NORMAL, SUAVE, wraplength=560).pack(anchor="w", pady=(4, 12))
+        lista = copias.listar_copias()
+        if not lista:
+            rotulo(janela, "Ainda não há cópias.", F_NORMAL).pack(anchor="w")
+
+        def restaurar(c) -> None:
+            if self.tarefas_rodando() or andamento.em_andamento():
+                messagebox.showwarning(NOME_APP, "Há uma tarefa rodando. Espere ela terminar (ou pare-a) antes de "
+                                       "restaurar.", parent=janela)
+                return
+            if not messagebox.askyesno(NOME_APP, f"Voltar os seus dados para a cópia de {c.rotulo}?\n\nO que você fez "
+                                       "depois disso sai dos dados, mas fica guardado numa cópia \"antes da "
+                                       "restauração\".", parent=janela):
+                return
+            try:
+                restaurados = copias.restaurar(c.nome)
+            except (OSError, ValueError) as erro:
+                messagebox.showerror(NOME_APP, f"Não deu para restaurar: {erro}", parent=janela)
+                return
+            messagebox.showinfo(NOME_APP, f"Pronto: {len(restaurados)} arquivo(s) voltaram para {c.rotulo}.",
+                                parent=janela)
+            janela.destroy()
+            self.atualizar()
+
+        for c in lista:
+            linha = cartao(janela, padx=14, pady=8)
+            linha.pack(fill="x", pady=3)
+            rotulo(linha, c.rotulo[:1].upper() + c.rotulo[1:], F_NEGRITO, bg=CARTAO).pack(side="left")
+            rotulo(linha, f"  {c.arquivos} arquivo(s) · {c.tamanho / 1024:.0f} KB", F_PEQUENA, SUAVE,
+                   bg=CARTAO).pack(side="left")
+            Botao(linha, "Restaurar", lambda c=c: restaurar(c), "link").pack(side="right")
+        Botao(janela, "Fechar", janela.destroy).pack(anchor="e", pady=(14, 0))
+
     def _agendar_busca(self) -> None:
-        r = perguntar(self.raiz, "Busca automática", "O computador precisa estar ligado nesse horário.",
+        r = perguntar(self.raiz, "Busca automática", "A busca roda sem abrir janela. Se o computador estiver desligado "
+                      "ou dormindo nesse horário, ela roda assim que ele ligar.",
                       [("hora", "Horário", "texto", None, "07:00", "Formato HH:MM. Às 7h o resumo fica pronto antes das 8h.")],
                       botao="Agendar")
         if r:

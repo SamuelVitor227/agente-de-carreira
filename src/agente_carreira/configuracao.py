@@ -172,8 +172,9 @@ class Configuracao(BaseModel):
 # ---------------------------------------------------------------- persistência
 
 def carregar_configuracao() -> Configuracao:
-    caminho = diretorio_dados() / ARQUIVO
-    config = Configuracao.model_validate_json(caminho.read_text(encoding="utf-8")) if caminho.is_file() else Configuracao()
+    from .arquivos import ler_modelo
+
+    config = ler_modelo(diretorio_dados() / ARQUIVO, Configuracao)
     antigo = diretorio_dados() / ARQUIVO_VAGAS_ANTIGO
     if antigo.is_file():
         # Migração única: as preferências de vagas passam a morar no arquivo central.
@@ -185,10 +186,9 @@ def carregar_configuracao() -> Configuracao:
 
 
 def salvar_configuracao(config: Configuracao) -> Path:
-    caminho = diretorio_dados() / ARQUIVO
-    caminho.parent.mkdir(parents=True, exist_ok=True)
-    caminho.write_text(config.model_dump_json(indent=2), encoding="utf-8")
-    return caminho
+    from .arquivos import gravar_modelo
+
+    return gravar_modelo(diretorio_dados() / ARQUIVO, config)
 
 
 # ---------------------------------------------------------------- edição por caminho

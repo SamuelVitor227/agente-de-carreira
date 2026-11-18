@@ -263,7 +263,9 @@ def _ler_json(nome: str) -> dict:
 def _gravar_json(nome: str, dados: dict) -> None:
     import json
 
-    (diretorio_dados() / nome).write_text(json.dumps(dados, ensure_ascii=False), encoding="utf-8")
+    from .arquivos import gravar_texto
+
+    gravar_texto(diretorio_dados() / nome, json.dumps(dados, ensure_ascii=False))
 
 
 def _cdp_vivo(porta: int) -> bool:

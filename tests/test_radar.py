@@ -18,7 +18,8 @@ from agente_carreira.radar.aderencia import (
     documento_perfil,
     documento_vaga,
 )
-from agente_carreira.radar.agenda import comando_schtasks, linha_cron, script_windows, validar_hora
+from agente_carreira.radar.agenda import (comando_criar, linha_cron, proxima_vez, script_tarefa, validar_hora,
+                                          xml_tarefa)
 from agente_carreira.radar.coleta import (
     ColetaCopiloto,
     ColetaErro,
@@ -595,9 +596,26 @@ def test_agendamento():
     assert validar_hora("7:00") == "07:00"
     with pytest.raises(ValueError):
         validar_hora("25:00")
-    comando = comando_schtasks(Path("C:/dados/rodada-vagas.cmd"), "07:00")
-    assert comando[:6] == ["schtasks", "/Create", "/SC", "DAILY", "/ST", "07:00"]
-    assert "/F" in comando and "AgenteCarreira-RodadaVagas" in comando
-    script = script_windows(Path("C:/Projeto Área"), "C:/uv.exe")
-    assert "chcp 65001" in script and 'cd /d "C:' in script and "agente vagas rodada" in script
+    agora = datetime(2026, 11, 18, 10, 30)  # quarta-feira
+    assert proxima_vez("07:00", agora) == datetime(2026, 11, 19, 7, 0)  # já passou hoje: começa amanhã
+    assert proxima_vez("12:00", agora) == datetime(2026, 11, 18, 12, 0)
+    assert proxima_vez("20:00", agora, "SUN") == datetime(2026, 11, 22, 20, 0)
+    xml = xml_tarefa(Path("C:/Python/pythonw.exe"), '"C:/Projeto/data/app/tarefa.pyw" vagas rodada',
+                     Path("C:/Projeto Área & Cia"), datetime(2026, 11, 19, 7, 0), "busca diária")
+    # Roda depois se o PC estava desligado no horário, também na bateria, e nunca duas ao mesmo tempo.
+    for trecho in ("<StartWhenAvailable>true</StartWhenAvailable>",
+                   "<DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>",
+                   "<StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>",
+                   "<MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>",
+                   "<StartBoundary>2026-11-19T07:00:00</StartBoundary>", "<DaysInterval>1</DaysInterval>",
+                   "<LogonType>InteractiveToken</LogonType>", "Área &amp; Cia", "pythonw.exe"):
+        assert trecho in xml
+    import xml.etree.ElementTree as ET
+
+    ET.fromstring(xml.encode("utf-16"))  # XML bem formado
+    comando = comando_criar("AgenteCarreira-RodadaVagas", Path("C:/d/tarefa.xml"))
+    assert comando[:4] == ["schtasks", "/Create", "/TN", "AgenteCarreira-RodadaVagas"] and "/XML" in comando
+    script = script_tarefa(Path("C:/Projeto Área/.venv/Lib/site-packages"), Path("C:/Projeto Área"))
+    assert "site.addsitedir(" in script and "from agente_carreira.operacao.agendada import rodar" in script
+    compile(script, "tarefa.pyw", "exec")
     assert linha_cron(Path("/home/x/proj"), "/usr/bin/uv", "07:30").startswith("30 7 * * * cd ")

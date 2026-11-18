@@ -12,8 +12,7 @@ from agente_carreira.funil import Lembretes, atualizar_lembretes
 from agente_carreira.ia import UsoIA, UsosIA
 from agente_carreira.operacao.saude import RegistroSaude
 from agente_carreira.plataformas.contas import ContaPlataforma, Contas
-from agente_carreira.radar.agenda import (comando_schtasks_semanal, linha_cron_semanal, script_windows,
-                                          validar_dia_hora)
+from agente_carreira.radar.agenda import linha_cron_semanal, proxima_vez, validar_dia_hora, xml_tarefa
 from agente_carreira.radar.modelos import Aderencia, BaseVagas, Fonte, RegistroRodada, Sinal, VagaEncontrada
 from agente_carreira.relatorios import (
     competencias_que_faltam,
@@ -158,11 +157,12 @@ def test_agendamento_semanal():
     assert validar_dia_hora("Segunda-feira 7:30") == ("MON", "07:30")
     with pytest.raises(ValueError):
         validar_dia_hora("todo dia 20:00")
-    comando = comando_schtasks_semanal(Path("C:/d/relatorio-semanal.cmd"), "SUN", "20:00")
-    assert comando[3:8] == ["WEEKLY", "/D", "SUN", "/ST", "20:00"]
+    inicio = proxima_vez("20:00", datetime(2026, 11, 18, 10, 0), "SUN")
+    assert inicio == datetime(2026, 11, 22, 20, 0)
+    xml = xml_tarefa(Path("C:/p/pythonw.exe"), '"C:/p/data/app/tarefa.pyw" relatorio semanal --notificar',
+                     Path("C:/p"), inicio, "relatório", "SUN")
+    assert "<Sunday />" in xml and "<WeeksInterval>1</WeeksInterval>" in xml and "relatorio semanal --notificar" in xml
     assert linha_cron_semanal(Path("/p"), "uv", "SUN", "20:00").startswith("0 20 * * 0 ")
-    script = script_windows(Path("C:/p"), "uv", comando="relatorio semanal --notificar", log="relatorio.log")
-    assert 'agente relatorio semanal --notificar >> "data\\relatorio.log"' in script
 
 
 # ---------------------------------------------------------------- RF-RL-03

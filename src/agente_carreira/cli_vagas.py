@@ -289,8 +289,9 @@ def vagas_rodada(
         notificar("falha_adaptador", "A rodada de vagas falhou", f"Erro: {erro}\n\nVeja 'agente tarefas' e 'agente saude'.", central)
         console.print(f"[red]A rodada falhou: {escape(str(erro))}[/red]")
         raise typer.Exit(1)
-    salvar_base(base)
-    salvar_config(config)
+    # A busca é automática: se você mudou algo enquanto ela rodava (salvou, descartou...), a sua mudança vale.
+    salvar_base(base, preferir="disco")
+    salvar_config(config, preferir="disco")
     salvar_saude(saude)
     tarefa.erro = None
     tarefa.dados["ultima_execucao"] = f"{date.today():%d/%m/%Y}"
@@ -675,42 +676,43 @@ def vagas_agendar(
     hora: str = typer.Option("07:00", "--hora", help="Horário diário da rodada (HH:MM)."),
     mostrar: bool = typer.Option(False, "--mostrar", help="Só mostra o comando, sem criar a tarefa."),
 ) -> None:
-    """Agenda a rodada diária no sistema (padrão: 7h, para o resumo sair antes das 8h) (RF-VG-03)."""
-    from .radar.agenda import NOME_TAREFA, comando_schtasks, linha_cron, script_windows, validar_hora
+    """Agenda a rodada diária no sistema (padrão: 7h, para o resumo sair antes das 8h) (RF-VG-03).
+
+    No Windows a busca roda sem janela; se o PC estiver desligado ou suspenso no horário, ela roda assim que
+    ele voltar.
+    """
+    from .operacao import agendada
+    from .radar.agenda import NOME_TAREFA, linha_cron, validar_hora
 
     try:
         hora = validar_hora(hora)
     except ValueError as erro:
         console.print(f"[red]{escape(str(erro))}[/red]")
         raise typer.Exit(1)
-    uv = shutil.which("uv") or "uv"
-    projeto = Path.cwd()
     config = carregar_config()
     config.hora_rodada = hora
 
     if sys.platform != "win32":
         console.print("Adicione esta linha ao seu crontab ('crontab -e'):")
-        console.print(linha_cron(projeto, uv, hora), markup=False, highlight=False)
+        console.print(linha_cron(Path.cwd(), shutil.which("uv") or "uv", hora), markup=False, highlight=False)
         salvar_config(config)
         return
 
-    script = diretorio_dados() / "rodada-vagas.cmd"
-    comando = comando_schtasks(script, hora)
     if mostrar:
-        console.print(script_windows(projeto, uv, os.environ.get("AGENTE_CARREIRA_DATA")), markup=False, highlight=False)
+        xml, comando = agendada.preparar(NOME_TAREFA, ["vagas", "rodada"], hora)
+        console.print(xml.read_text(encoding="utf-16"), markup=False, highlight=False)
         console.print(" ".join(comando), markup=False, highlight=False)
         return
     if not typer.confirm(f"Criar a tarefa '{NOME_TAREFA}' no Agendador do Windows, todo dia às {hora}?"):
         raise typer.Exit(0)
-    script.parent.mkdir(parents=True, exist_ok=True)
-    script.write_bytes(script_windows(projeto, uv, os.environ.get("AGENTE_CARREIRA_DATA")).encode("utf-8"))
-    resultado = subprocess.run(comando, capture_output=True, text=True)
-    if resultado.returncode != 0:
-        console.print(f"[red]Falha ao criar a tarefa: {escape(resultado.stderr or resultado.stdout)}[/red]")
+    try:
+        agendada.instalar(NOME_TAREFA, ["vagas", "rodada"], hora)
+    except RuntimeError as erro:
+        console.print(f"[red]Falha ao criar a tarefa: {escape(str(erro))}[/red]")
         raise typer.Exit(1)
     salvar_config(config)
-    console.print(f"[green]Rodada agendada para {hora} todos os dias.[/green] Log em data/rodada.log. "
-                  "O PC precisa estar ligado no horário (RNF-18).")
+    console.print(f"[green]Busca agendada para {hora} todos os dias, sem janela.[/green] Se o PC estiver desligado "
+                  "ou suspenso nesse horário, ela roda assim que ele voltar. Registro em data/rodada.log.")
 
 
 @vagas_app.command("gupy")
@@ -763,7 +765,7 @@ def vagas_reavaliar(
         salvar_saude(saude)
         console.print(f"LinkedIn: {lidas} descrição(ões) lida(s).")
     liberadas, resumo, arquivo = reavaliar_base(base, perfil, config, date.today())
-    salvar_base(base)
+    salvar_base(base, preferir="disco")
     console.print(f"[green]{liberadas} vaga(s) voltaram a valer[/green] · {len(resumo.itens)} recomendada(s) no resumo.")
     _tabela_resumo(resumo.itens)
     console.print(f"Resumo salvo em {arquivo}")

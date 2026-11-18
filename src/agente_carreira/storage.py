@@ -46,15 +46,15 @@ def carregar_perfil() -> PerfilMestre:
     caminho = caminho_perfil()
     if not caminho.is_file():
         raise PerfilAusente(f"{COMO_COMECAR}\n(procurado em {caminho})")
-    return PerfilMestre.model_validate_json(caminho.read_text(encoding="utf-8"))
+    from .arquivos import ler_modelo
+
+    return ler_modelo(caminho, PerfilMestre)
 
 
 def salvar_perfil(perfil: PerfilMestre) -> Path:
+    from .arquivos import gravar_modelo
+
     perfil.tocar()
     caminho = caminho_perfil()
-    caminho.parent.mkdir(parents=True, exist_ok=True)
-    arquivar_versao(caminho)  # RF-PM-06: a versão anterior vai para o histórico
-    caminho.write_text(
-        perfil.model_dump_json(indent=2), encoding="utf-8"
-    )
-    return caminho
+    # RF-PM-06: a versão anterior vai para o histórico (com o arquivo travado, logo antes da troca).
+    return gravar_modelo(caminho, perfil, antes_de_trocar=lambda: arquivar_versao(caminho))

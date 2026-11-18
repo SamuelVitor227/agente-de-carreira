@@ -118,8 +118,8 @@ def relatorio_agendar(
 ) -> None:
     """Agenda o relatório semanal no sistema (padrão: domingo 20:00) (UC-11)."""
     from .configuracao import carregar_configuracao, salvar_configuracao
-    from .radar.agenda import (NOME_TAREFA_SEMANAL, comando_schtasks_semanal, linha_cron_semanal, script_windows,
-                               validar_dia_hora)
+    from .operacao import agendada
+    from .radar.agenda import NOME_TAREFA_SEMANAL, linha_cron_semanal, validar_dia_hora
 
     central = carregar_configuracao()
     texto = quando or central.horarios.relatorio_semanal
@@ -128,29 +128,26 @@ def relatorio_agendar(
     except ValueError as erro:
         console.print(f"[red]{escape(str(erro))}[/red]")
         raise typer.Exit(1)
-    uv = shutil.which("uv") or "uv"
-    projeto = Path.cwd()
     if sys.platform != "win32":
         console.print("Adicione esta linha ao seu crontab ('crontab -e'):")
-        console.print(linha_cron_semanal(projeto, uv, dia, hora), markup=False, highlight=False)
+        console.print(linha_cron_semanal(Path.cwd(), shutil.which("uv") or "uv", dia, hora), markup=False,
+                      highlight=False)
     else:
-        script = diretorio_dados() / "relatorio-semanal.cmd"
-        conteudo = script_windows(projeto, uv, os.environ.get("AGENTE_CARREIRA_DATA"),
-                                  comando="relatorio semanal --notificar", log="relatorio.log")
-        comando = comando_schtasks_semanal(script, dia, hora)
+        argumentos = ["relatorio", "semanal", "--notificar"]
         if mostrar:
-            console.print(conteudo, markup=False, highlight=False)
+            xml, comando = agendada.preparar(NOME_TAREFA_SEMANAL, argumentos, hora, dia)
+            console.print(xml.read_text(encoding="utf-16"), markup=False, highlight=False)
             console.print(" ".join(comando), markup=False, highlight=False)
             return
         if not typer.confirm(f"Criar a tarefa '{NOME_TAREFA_SEMANAL}' no Agendador do Windows ({texto})?"):
             raise typer.Exit(0)
-        script.parent.mkdir(parents=True, exist_ok=True)
-        script.write_bytes(conteudo.encode("utf-8"))
-        resultado = subprocess.run(comando, capture_output=True, text=True)
-        if resultado.returncode != 0:
-            console.print(f"[red]Falha ao criar a tarefa: {escape(resultado.stderr or resultado.stdout)}[/red]")
+        try:
+            agendada.instalar(NOME_TAREFA_SEMANAL, argumentos, hora, dia)
+        except RuntimeError as erro:
+            console.print(f"[red]Falha ao criar a tarefa: {escape(str(erro))}[/red]")
             raise typer.Exit(1)
-        console.print(f"[green]Relatório agendado ({texto}).[/green] Log em data/relatorio.log. O PC precisa estar ligado.")
+        console.print(f"[green]Relatório agendado ({texto}), sem janela.[/green] Se o PC estiver desligado no "
+                      "horário, ele sai assim que o PC ligar. Registro em data/relatorio.log.")
     if quando:
         central.horarios.relatorio_semanal = texto
         salvar_configuracao(central)

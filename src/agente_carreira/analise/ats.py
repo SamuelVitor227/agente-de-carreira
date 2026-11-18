@@ -12,6 +12,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
+from ..arquivos import gravar_modelo, ler_modelo
 from ..models import PerfilMestre
 from ..storage import diretorio_dados
 from .lacunas import gerar_relatorio
@@ -150,9 +151,7 @@ def caminho_historico() -> Path:
 
 def carregar_historico() -> HistoricoNotas:
     caminho = caminho_historico()
-    if not caminho.is_file():
-        return HistoricoNotas()
-    return HistoricoNotas.model_validate_json(caminho.read_text(encoding="utf-8"))
+    return ler_modelo(caminho, HistoricoNotas)
 
 
 def registrar_nota(nota: NotaATS) -> NotaATS | None:
@@ -161,8 +160,7 @@ def registrar_nota(nota: NotaATS) -> NotaATS | None:
     anterior = next((n for n in reversed(historico.notas) if n.foco == nota.foco), None)
     historico.notas.append(nota)
     caminho = caminho_historico()
-    caminho.parent.mkdir(parents=True, exist_ok=True)
-    caminho.write_text(historico.model_dump_json(indent=2), encoding="utf-8")
+    gravar_modelo(caminho, historico)
     return anterior
 
 

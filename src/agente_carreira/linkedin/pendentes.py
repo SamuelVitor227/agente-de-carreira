@@ -8,6 +8,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
+from ..arquivos import gravar_modelo, ler_modelo
 from ..storage import diretorio_dados
 from .propostas import Proposta
 
@@ -52,13 +53,10 @@ def enfileirar(pendentes: PropostasPendentes, propostas: list[Proposta], motor: 
 
 def carregar_pendentes() -> PropostasPendentes:
     caminho = diretorio_dados() / ARQUIVO
-    if not caminho.is_file():
-        return PropostasPendentes()
-    return PropostasPendentes.model_validate_json(caminho.read_text(encoding="utf-8"))
+    return ler_modelo(caminho, PropostasPendentes)
 
 
 def salvar_pendentes(pendentes: PropostasPendentes) -> Path:
     caminho = diretorio_dados() / ARQUIVO
-    caminho.parent.mkdir(parents=True, exist_ok=True)
-    caminho.write_text(pendentes.model_dump_json(indent=2), encoding="utf-8")
+    gravar_modelo(caminho, pendentes)
     return caminho

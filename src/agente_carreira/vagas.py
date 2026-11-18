@@ -12,6 +12,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
+from .arquivos import gravar_modelo, ler_modelo
 from .storage import diretorio_dados
 
 ARQUIVO_VAGAS = "vagas-alvo.json"
@@ -39,15 +40,12 @@ def caminho_vagas() -> Path:
 
 def carregar_vagas() -> VagasAlvo:
     caminho = caminho_vagas()
-    if not caminho.is_file():
-        return VagasAlvo()
-    return VagasAlvo.model_validate_json(caminho.read_text(encoding="utf-8"))
+    return ler_modelo(caminho, VagasAlvo)
 
 
 def salvar_vagas(colecao: VagasAlvo) -> Path:
     caminho = caminho_vagas()
-    caminho.parent.mkdir(parents=True, exist_ok=True)
-    caminho.write_text(colecao.model_dump_json(indent=2), encoding="utf-8")
+    gravar_modelo(caminho, colecao)
     return caminho
 
 

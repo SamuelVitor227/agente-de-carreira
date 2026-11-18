@@ -16,6 +16,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from ..arquivos import gravar_modelo, ler_modelo
 from ..storage import diretorio_dados
 
 ARQUIVO = "saude-adaptadores.json"
@@ -96,13 +97,10 @@ def verificar_campos(esperados: list[str], encontrados: list[str]) -> None:
 
 def carregar_saude() -> RegistroSaude:
     caminho = diretorio_dados() / ARQUIVO
-    if not caminho.is_file():
-        return RegistroSaude()
-    return RegistroSaude.model_validate_json(caminho.read_text(encoding="utf-8"))
+    return ler_modelo(caminho, RegistroSaude)
 
 
 def salvar_saude(registro: RegistroSaude) -> Path:
     caminho = diretorio_dados() / ARQUIVO
-    caminho.parent.mkdir(parents=True, exist_ok=True)
-    caminho.write_text(registro.model_dump_json(indent=2), encoding="utf-8")
+    gravar_modelo(caminho, registro)
     return caminho

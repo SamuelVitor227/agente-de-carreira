@@ -18,6 +18,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
+from ..arquivos import gravar_modelo, ler_modelo
 from ..confirmacao import MARCADOR
 from ..models import PerfilMestre
 from ..storage import diretorio_dados
@@ -272,15 +273,12 @@ def marcar_publicada(pub: Publicacao) -> None:
 
 def _carregar(modelo, arquivo: str):
     caminho = diretorio_dados() / arquivo
-    if not caminho.is_file():
-        return modelo()
-    return modelo.model_validate_json(caminho.read_text(encoding="utf-8"))
+    return ler_modelo(caminho, modelo)
 
 
 def _salvar(obj: BaseModel, arquivo: str) -> Path:
     caminho = diretorio_dados() / arquivo
-    caminho.parent.mkdir(parents=True, exist_ok=True)
-    caminho.write_text(obj.model_dump_json(indent=2), encoding="utf-8")
+    gravar_modelo(caminho, obj)
     return caminho
 
 

@@ -19,6 +19,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
+from .arquivos import gravar_modelo, ler_modelo
 from .candidaturas import Candidatura, Candidaturas, Etapa, FINAIS, NOMES_ETAPA, ORDEM
 from .storage import diretorio_dados
 
@@ -38,13 +39,12 @@ def _norm(texto: str | None) -> str:
 
 def _carregar(modelo, arquivo: str):
     caminho = diretorio_dados() / arquivo
-    return modelo.model_validate_json(caminho.read_text(encoding="utf-8")) if caminho.is_file() else modelo()
+    return ler_modelo(caminho, modelo)
 
 
 def _salvar(obj: BaseModel, arquivo: str) -> Path:
     caminho = diretorio_dados() / arquivo
-    caminho.parent.mkdir(parents=True, exist_ok=True)
-    caminho.write_text(obj.model_dump_json(indent=2), encoding="utf-8")
+    gravar_modelo(caminho, obj)
     return caminho
 
 

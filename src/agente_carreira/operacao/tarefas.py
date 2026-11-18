@@ -15,6 +15,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
+from ..arquivos import gravar_modelo, ler_modelo
 from ..storage import diretorio_dados
 
 ARQUIVO = "tarefas.json"
@@ -150,13 +151,10 @@ def falhar(tarefa: Tarefa, erro: str) -> None:
 
 def carregar_tarefas() -> Tarefas:
     caminho = diretorio_dados() / ARQUIVO
-    if not caminho.is_file():
-        return Tarefas()
-    return Tarefas.model_validate_json(caminho.read_text(encoding="utf-8"))
+    return ler_modelo(caminho, Tarefas)
 
 
 def salvar_tarefas(tarefas: Tarefas) -> Path:
     caminho = diretorio_dados() / ARQUIVO
-    caminho.parent.mkdir(parents=True, exist_ok=True)
-    caminho.write_text(tarefas.model_dump_json(indent=2), encoding="utf-8")
+    gravar_modelo(caminho, tarefas)
     return caminho

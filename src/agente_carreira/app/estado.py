@@ -60,6 +60,7 @@ class Inicio:
     proximo: Proximo
     numeros: dict[str, int] = field(default_factory=dict)
     ultima_busca: datetime | None = None
+    busca_automatica: object | None = None  # operacao.agendada.Situacao: texto e se há problema
 
 
 def _utc(momento: datetime) -> datetime:
@@ -137,8 +138,11 @@ def montar_inicio(dados=None) -> Inicio:
                               tem_vagas=bool(dados.base.itens) or dados.base.ultima_rodada is not None,
                               tem_email=bool(email_configurado()), tem_agendamento=agendada is not False)
     nome = dados.perfil.contato.nome.split()[0] if dados.perfil and dados.perfil.contato.nome else None
+    from ..operacao.agendada import situacao
+
     return Inicio(nome=nome, passos=passos, proximo=proximo_passo(passos, numeros, dados.base.ultima_rodada),
-                  numeros=numeros, ultima_busca=dados.base.ultima_rodada)
+                  numeros=numeros, ultima_busca=dados.base.ultima_rodada,
+                  busca_automatica=situacao(agendada, config.hora_rodada))
 
 
 # ---------------------------------------------------------------- listas

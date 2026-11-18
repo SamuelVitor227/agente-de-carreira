@@ -14,6 +14,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+from ..arquivos import gravar_modelo
 from ..models import PerfilMestre
 from ..storage import diretorio_dados
 from .limites import LIMITES
@@ -186,6 +187,5 @@ def gerar_alertas(perfil: PerfilMestre, focos: list[str]) -> PacoteAlertas:
 
 def salvar_pacote(pacote: BaseModel, nome_arquivo: str) -> Path:
     caminho = diretorio_dados() / nome_arquivo
-    caminho.parent.mkdir(parents=True, exist_ok=True)
-    caminho.write_text(pacote.model_dump_json(indent=2), encoding="utf-8")
+    gravar_modelo(caminho, pacote)
     return caminho

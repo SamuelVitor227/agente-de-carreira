@@ -17,6 +17,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field, field_validator
 
+from .arquivos import gravar_modelo, ler_modelo
 from .storage import diretorio_dados
 
 ARQUIVO_CANDIDATURAS = "candidaturas.json"
@@ -160,15 +161,12 @@ def caminho_candidaturas() -> Path:
 
 def carregar_candidaturas() -> Candidaturas:
     caminho = caminho_candidaturas()
-    if not caminho.is_file():
-        return Candidaturas()
-    return Candidaturas.model_validate_json(caminho.read_text(encoding="utf-8"))
+    return ler_modelo(caminho, Candidaturas)
 
 
 def salvar_candidaturas(colecao: Candidaturas) -> Path:
     caminho = caminho_candidaturas()
-    caminho.parent.mkdir(parents=True, exist_ok=True)
-    caminho.write_text(colecao.model_dump_json(indent=2), encoding="utf-8")
+    gravar_modelo(caminho, colecao)
     return caminho
 
 

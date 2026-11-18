@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
+from ..arquivos import Preferencia, gravar_modelo, ler_modelo
 from ..storage import diretorio_dados
 from .texto import slug
 
@@ -291,28 +292,37 @@ def _caminho(arquivo: str) -> Path:
 
 def carregar_config() -> ConfigVagas:
     """As preferências de vagas moram no arquivo central de configuração (RF-OP-01)."""
+    from ..arquivos import lembrar
     from ..configuracao import carregar_configuracao
 
-    return carregar_configuracao().vagas
+    vagas = carregar_configuracao().vagas
+    lembrar(vagas)
+    return vagas
 
 
-def salvar_config(config: ConfigVagas) -> Path:
+def salvar_config(config: ConfigVagas, preferir: Preferencia = "meu") -> Path:
+    """Grava as preferências de vagas sem desfazer o que mudou no arquivo desde a leitura."""
+    from ..arquivos import lembrar, mesclar_modelo
     from ..configuracao import carregar_configuracao, salvar_configuracao
 
     central = carregar_configuracao()
-    central.vagas = config
-    return salvar_configuracao(central)
+    central.vagas = mesclar_modelo(config, central.vagas, preferir)
+    caminho = salvar_configuracao(central)
+    lembrar(config)
+    return caminho
 
 
 def carregar_base() -> BaseVagas:
     caminho = _caminho(ARQUIVO_VAGAS)
-    if not caminho.is_file():
-        return BaseVagas()
-    return BaseVagas.model_validate_json(caminho.read_text(encoding="utf-8"))
+    return ler_modelo(caminho, BaseVagas)
 
 
-def salvar_base(base: BaseVagas) -> Path:
+def salvar_base(base: BaseVagas, preferir: Preferencia = "meu") -> Path:
+    """Grava as vagas sem desfazer o que outra tarefa gravou desde a leitura.
+
+    A busca e a reavaliação (automáticas) passam preferir="disco": se a pessoa salvou ou descartou uma vaga
+    enquanto elas rodavam, a escolha da pessoa vale.
+    """
     caminho = _caminho(ARQUIVO_VAGAS)
-    caminho.parent.mkdir(parents=True, exist_ok=True)
-    caminho.write_text(base.model_dump_json(indent=2), encoding="utf-8")
+    gravar_modelo(caminho, base, preferir=preferir)
     return caminho

@@ -14,6 +14,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from ..arquivos import gravar_modelo, ler_modelo
 from ..models import PerfilMestre
 from ..storage import diretorio_dados
 from .estado import carregar_estado
@@ -94,16 +95,13 @@ def caminho_auditoria() -> Path:
 
 def carregar_auditoria() -> Auditoria:
     caminho = caminho_auditoria()
-    if not caminho.is_file():
-        return Auditoria()
-    return Auditoria.model_validate_json(caminho.read_text(encoding="utf-8"))
+    return ler_modelo(caminho, Auditoria)
 
 
 def salvar_auditoria(auditoria: Auditoria) -> None:
     auditoria.atualizada_em = datetime.now(timezone.utc)
     caminho = caminho_auditoria()
-    caminho.parent.mkdir(parents=True, exist_ok=True)
-    caminho.write_text(auditoria.model_dump_json(indent=2), encoding="utf-8")
+    gravar_modelo(caminho, auditoria)
 
 
 def _verificacoes_automaticas(perfil: PerfilMestre) -> dict[int, str]:

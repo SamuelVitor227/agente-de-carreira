@@ -293,3 +293,65 @@ def test_processo_filho_conversa_com_a_janela(tmp_path):
     assert processo.wait(timeout=60) == 0
     assert [p["tipo"] for p in perguntas] == ["sim_nao"] and "Perfil-mestre criado" in "".join(texto)
     assert (tmp_path / "dados" / "perfil-mestre.json").is_file()
+
+
+def test_parar_com_pergunta_aberta_cancela_com_calma(tmp_path):
+    """O pedido de parar chega no lugar da resposta: a tarefa termina como 'Cancelado', sem ser morta."""
+    import json
+    import os
+    import subprocess
+    import sys
+
+    from agente_carreira.app.filho import MARCA, PEDIDO_PARAR
+
+    cv = tmp_path / "cv.txt"
+    cv.write_text("Ana Teste\nana@example.com\n\nCompetências\nC#, SQL\n", encoding="utf-8")
+    ambiente = dict(os.environ, AGENTE_CARREIRA_DATA=str(tmp_path / "dados"), PYTHONIOENCODING="utf-8")
+    processo = subprocess.Popen([sys.executable, "-m", "agente_carreira.app.filho", "importar", str(cv)],
+                                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                                encoding="utf-8", errors="replace", bufsize=1, env=ambiente)
+    texto = []
+    for linha in iter(processo.stdout.readline, ""):
+        if MARCA in linha:
+            processo.stdin.write(PEDIDO_PARAR + "\n")
+            processo.stdin.flush()
+        else:
+            texto.append(linha)
+    assert processo.wait(timeout=60) == 130
+    assert "Cancelado" in "".join(texto)
+    assert not (tmp_path / "dados" / "perfil-mestre.json").exists()
+
+
+def test_canal_interrompe_a_tarefa_quando_nao_ha_pergunta():
+    import io
+    import time
+
+    from agente_carreira.app.filho import PEDIDO_PARAR, Canal
+
+    interrupcoes = []
+    canal = Canal(io.StringIO(PEDIDO_PARAR + "\n"), interromper=lambda: interrupcoes.append(1))
+    for _ in range(50):
+        if canal.fechada.is_set():
+            break
+        time.sleep(0.02)
+    assert interrupcoes == [1] and canal.parar.is_set()
+    assert canal.esperar_resposta() is None  # parada: nenhuma pergunta nova espera resposta
+
+
+def test_saida_vai_para_o_log_quando_o_app_fecha(tmp_path, monkeypatch):
+    from agente_carreira.app.filho import LOG_SEGUNDO_PLANO, Saida
+
+    monkeypatch.setenv("AGENTE_CARREIRA_DATA", str(tmp_path))
+
+    class JanelaFechada:
+        def write(self, _texto):
+            raise OSError(22, "Invalid argument")
+
+        def flush(self):
+            pass
+
+    saida = Saida(JanelaFechada(), ["vagas", "rodada"])
+    assert saida.escrever("\x1b[32mBuscando vagas…\x1b[0m\n")
+    assert not saida.escrever("\x1ePERGUNTA {}\n", controle=True)  # pergunta sem ninguém para responder
+    log = (tmp_path / "app" / LOG_SEGUNDO_PLANO).read_text(encoding="utf-8")
+    assert "agente vagas rodada" in log and "Buscando vagas…" in log and "\x1b" not in log

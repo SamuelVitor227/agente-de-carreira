@@ -16,6 +16,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from ..arquivos import gravar_modelo, ler_modelo
 from ..storage import diretorio_dados
 
 ARQUIVO_AJUSTES = "plataformas-ajustes.json"
@@ -161,15 +162,12 @@ class Ajustes(BaseModel):
 
 def carregar_ajustes() -> Ajustes:
     caminho = diretorio_dados() / ARQUIVO_AJUSTES
-    if not caminho.is_file():
-        return Ajustes()
-    return Ajustes.model_validate_json(caminho.read_text(encoding="utf-8"))
+    return ler_modelo(caminho, Ajustes)
 
 
 def salvar_ajustes(ajustes: Ajustes) -> Path:
     caminho = diretorio_dados() / ARQUIVO_AJUSTES
-    caminho.parent.mkdir(parents=True, exist_ok=True)
-    caminho.write_text(ajustes.model_dump_json(indent=2), encoding="utf-8")
+    gravar_modelo(caminho, ajustes)
     return caminho
 
 

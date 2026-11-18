@@ -14,6 +14,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
+from .arquivos import gravar_modelo, ler_modelo
 from .storage import diretorio_dados
 
 ARQUIVO = "respostas-padrao.json"
@@ -101,13 +102,10 @@ def definir_resposta(banco: BancoRespostas, chave: str, resposta: str, valida_at
 
 def carregar_respostas() -> BancoRespostas:
     caminho = diretorio_dados() / ARQUIVO
-    if not caminho.is_file():
-        return BancoRespostas()
-    return BancoRespostas.model_validate_json(caminho.read_text(encoding="utf-8"))
+    return ler_modelo(caminho, BancoRespostas)
 
 
 def salvar_respostas(banco: BancoRespostas) -> Path:
     caminho = diretorio_dados() / ARQUIVO
-    caminho.parent.mkdir(parents=True, exist_ok=True)
-    caminho.write_text(banco.model_dump_json(indent=2), encoding="utf-8")
+    gravar_modelo(caminho, banco)
     return caminho

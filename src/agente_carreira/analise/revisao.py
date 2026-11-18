@@ -13,6 +13,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
+from ..arquivos import gravar_modelo, ler_modelo
 from ..models import PerfilMestre
 from ..storage import diretorio_dados
 from ..vagas import Vaga
@@ -63,9 +64,7 @@ def caminho_revisoes() -> Path:
 
 def carregar_revisoes() -> HistoricoRevisoes:
     caminho = caminho_revisoes()
-    if not caminho.is_file():
-        return HistoricoRevisoes()
-    return HistoricoRevisoes.model_validate_json(caminho.read_text(encoding="utf-8"))
+    return ler_modelo(caminho, HistoricoRevisoes)
 
 
 def registrar_revisao(registro: RegistroRevisao) -> RegistroRevisao | None:
@@ -74,8 +73,7 @@ def registrar_revisao(registro: RegistroRevisao) -> RegistroRevisao | None:
     anterior = historico.revisoes[-1] if historico.revisoes else None
     historico.revisoes.append(registro)
     caminho = caminho_revisoes()
-    caminho.parent.mkdir(parents=True, exist_ok=True)
-    caminho.write_text(historico.model_dump_json(indent=2), encoding="utf-8")
+    gravar_modelo(caminho, historico)
     return anterior
 
 

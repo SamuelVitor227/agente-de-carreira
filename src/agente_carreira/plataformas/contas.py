@@ -8,6 +8,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from ..arquivos import gravar_modelo, ler_modelo
 from ..storage import diretorio_dados
 from .pacote import PacoteCadastro
 
@@ -56,13 +57,10 @@ def registrar_gravacao(conta: ContaPlataforma, pacote: PacoteCadastro, completud
 
 def carregar_contas() -> Contas:
     caminho = diretorio_dados() / ARQUIVO
-    if not caminho.is_file():
-        return Contas()
-    return Contas.model_validate_json(caminho.read_text(encoding="utf-8"))
+    return ler_modelo(caminho, Contas)
 
 
 def salvar_contas(contas: Contas) -> Path:
     caminho = diretorio_dados() / ARQUIVO
-    caminho.parent.mkdir(parents=True, exist_ok=True)
-    caminho.write_text(contas.model_dump_json(indent=2), encoding="utf-8")
+    gravar_modelo(caminho, contas)
     return caminho
