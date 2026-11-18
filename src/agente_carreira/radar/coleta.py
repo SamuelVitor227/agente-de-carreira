@@ -98,8 +98,12 @@ PADROES_LINK_VAGA: dict[str, re.Pattern[str]] = {
 _URL = re.compile(r"https?://\S+")
 _IGNORAR = re.compile(
     r"^(ver vaga|ver todas|ver mais|view job|see (all )?jobs|candidatura simplificada|easy apply|promovida|promoted"
-    r"|nova|novo|new|candidate-se|candidatar|apply( now)?|ativamente recrutando|actively recruiting|saiba mais"
-    r"|mais vagas|\d+\s+(candidaturas?|applicants?|candidatos?)|h[aá]\s+\d+|\d+\s+(dias?|horas?|days?|hours?))\b",
+    # Selo "Nova"/"Novo"/"New" só quando está sozinho na linha: "Nova Lima, MG" é cidade, não selo.
+    r"|nova\s*$|novo\s*$|new\s*$|candidate-se|candidatar|apply( now)?|ativamente recrutando|actively recruiting|saiba mais"
+    r"|mais vagas|\d+\s+(candidaturas?|applicants?|candidatos?)|h[aá]\s+\d+|\d+\s+(dias?|horas?|days?|hours?)"
+    # Dicas do LinkedIn que aparecem embaixo da vaga e não são local nem empresa.
+    r"|recrutando agora|\d+\s+ex-alunos?|\d+\s+conex(ão|ões|ao|oes)|muitas competências relevantes"
+    r"|.*competências relevantes|.*ex-alunos da instituição)\b",
     re.I,
 )
 
@@ -187,6 +191,35 @@ def _data_email(msg: Message) -> date | None:
         return None
 
 
+_ASSUNTO_ALERTA = re.compile(r"vaga|job|oportunidade|alerta|recomenda|contratando|hiring|emprego|position|est[aá]gio",
+                             re.I)
+
+
+def parece_alerta(msg: Message) -> bool:
+    """E-mail de alerta de vagas (pelo assunto ou pelo remetente de alertas), não aviso de termos, cadastro etc."""
+    remetente = parseaddr(str(msg.get("From", "")))[1].lower()
+    return bool(_ASSUNTO_ALERTA.search(str(msg.get("Subject", "")))) or any(
+        p in remetente for p in ("jobalert", "jobs-listings", "job-alert"))
+
+
+def so_links_de_rastreamento(msg: Message) -> bool:
+    """Todos os links passam por rastreamento (ex.: tracking.recomendacao.vagas.com.br): não dá para saber a vaga."""
+    plano, html = _partes(msg)
+    links = _URL.findall("\n".join(t for t in (plano, html) if t))
+    links = [l for l in links if not re.search(r"\.(png|jpe?g|gif)\b", l, re.I)]
+    return bool(links) and all(re.search(r"//[^/]*(track|click|clk|links?\.|email\.)", l, re.I) for l in links)
+
+
+def separar_empresa_local(empresa: str | None, local: str | None) -> tuple[str | None, str | None]:
+    """Alertas novos do LinkedIn trazem 'Empresa · Cidade, UF (Modelo)' numa linha só; dicas não são local."""
+    if local and _IGNORAR.match(local.strip()):
+        local = None
+    if empresa and " · " in empresa:
+        nome, _, resto = empresa.partition(" · ")
+        return nome.strip() or None, resto.strip() or local
+    return empresa, local
+
+
 def vagas_de_email(msg: Message) -> list[VagaBruta]:
     """Vagas citadas num e-mail de alerta: link da vaga + título, empresa e local ao redor."""
     plano, html = _partes(msg)
@@ -220,6 +253,7 @@ def vagas_de_email(msg: Message) -> list[VagaBruta]:
                     continue
                 vistos.add(link)
                 titulo, empresa, local = (contexto + [None, None])[:3]
+                empresa, local = separar_empresa_local(empresa, local)
                 vagas.append(VagaBruta(
                     titulo=titulo, empresa=empresa, local=local, link=link,
                     fonte_tipo="email", fonte_origem=f"{plataforma}-alerta", publicada_em=data,

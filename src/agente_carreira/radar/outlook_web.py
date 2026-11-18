@@ -110,7 +110,10 @@ def ler_alertas(pagina, consultas: list[str], ja_processados: set[str], *, por_c
     caixa_aberta(pagina, dormir=dormir)
     mensagens: list[tuple[str, EmailMessage]] = []
     avisos: list[str] = []
-    for consulta in consultas:
+    from ..operacao import andamento
+
+    for n, consulta in enumerate(consultas, 1):
+        andamento.etapa(f"Outlook: lendo alertas de {consulta.split(':', 1)[-1]}", n, len(consultas))
         linhas = pesquisar(pagina, consulta, dormir)[:por_consulta]
         novas = [l for l in linhas if f"<outlook-web-{l['convid']}>" not in ja_processados]
         for linha in novas:
@@ -139,7 +142,7 @@ def leitor_da_rodada(consultas: list[str], saude, *, por_consulta: int = 15, abr
     def ler(ja_processados: set[str]):
         if not saude.pode_usar(ADAPTADOR):
             return [], [f"{ADAPTADOR}: parado após erro (agente saude reativar {ADAPTADOR})"], []
-        from ..navegador import NavegadorOcupado, SessaoNavegador, erro_curto, playwright_disponivel
+        from ..navegador import NavegadorOcupado, SessaoNavegador, erro_curto, fechado_pela_pessoa, playwright_disponivel
         from ..operacao.saude import LayoutMudou
 
         if abrir_sessao is None and not playwright_disponivel():
@@ -157,6 +160,8 @@ def leitor_da_rodada(consultas: list[str], saude, *, por_consulta: int = 15, abr
             parou = saude.falha(ADAPTADOR, str(erro), parar=True)
             return [], [f"Outlook: {erro}"], [f"{ADAPTADOR}: {erro}"] if parou else []
         except Exception as erro:  # noqa: BLE001 - a leitura do e-mail não derruba a rodada
+            if fechado_pela_pessoa(erro):
+                return [], ["Outlook: o navegador do agente foi fechado no meio da busca; fica para a próxima rodada"], []
             saude.falha(ADAPTADOR, erro_curto(erro))
             return [], [f"Outlook: {erro_curto(erro)}"], []
         saude.sucesso(ADAPTADOR)

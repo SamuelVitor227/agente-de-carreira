@@ -96,8 +96,9 @@ def _fmt_data(d: date) -> str:
 
 
 def _fmt_periodo(exp: Experiencia, idioma: str) -> str:
-    fim = _fmt_data(exp.periodo.fim) if exp.periodo.fim else ROTULOS[idioma]["atual"]
-    return f"{_fmt_data(exp.periodo.inicio)} – {fim}"
+    formatar = (lambda d: str(d.year)) if exp.periodo.so_ano else _fmt_data
+    fim = formatar(exp.periodo.fim) if exp.periodo.fim else ROTULOS[idioma]["atual"]
+    return f"{formatar(exp.periodo.inicio)} – {fim}"
 
 
 def _item_experiencia(exp: Experiencia, perfil: PerfilMestre, foco: str, idioma: str) -> ItemCV:
@@ -208,12 +209,13 @@ def gerar_variante(
         itens=[ItemCV(titulo=i.idioma, subtitulo=i.nivel) for i in perfil.idiomas],
     )
 
+    # Competências logo no começo: é o que o recrutador de TI procura primeiro.
     if nivel.lower() in NIVEIS_INICIAIS:
-        ordem = [formacao, secao_projetos, certificacoes, secao_dentro, secao_fora]
+        ordem = [formacao, competencias, secao_projetos, secao_dentro, secao_fora, certificacoes]
     else:
         secao_dentro.itens = dentro + fora
-        ordem = [secao_dentro, secao_projetos, formacao, certificacoes]
+        ordem = [secao_dentro, competencias, secao_projetos, formacao, certificacoes]
 
-    secoes += ordem + [competencias, idiomas_secao]
+    secoes += ordem + [idiomas_secao]
     variante.secoes = [s for s in secoes if s.itens or s.paragrafo]
     return variante

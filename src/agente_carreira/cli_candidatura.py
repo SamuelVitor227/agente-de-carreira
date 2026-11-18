@@ -173,7 +173,41 @@ def _registrar_envio(candidatura, kit, modo: str, captura: Path | None) -> None:
     salvar_lembretes(lembretes)
 
 
-def _preencher_linkedin(link: str, central, cv: Path | None, perfil, contrato: str | None) -> Path | None:
+def _esperar_fechar(sessao) -> None:
+    """Espera você fechar a janela do navegador do agente (o envio é seu; feche quando terminar)."""
+    import time
+
+    while True:
+        try:
+            if not [p for p in sessao.pagina.context.pages if not p.is_closed()]:
+                return
+        except Exception:  # noqa: BLE001 - navegador já fechado
+            return
+        time.sleep(1.5)
+
+
+def _candidatura_no_site(link: str, cv: Path | None, perfil) -> None:
+    """Abre a vaga no site (Gupy, Vagas, InfoJobs...) e preenche sozinho os dados básicos e o currículo até você fechar."""
+    from .navegador import SessaoNavegador
+    from .preenchimento_auto import acompanhar, campo_curriculo, campos_basicos, dominio_raiz
+
+    campos = campos_basicos(perfil) + ([campo_curriculo(cv)] if cv and cv.is_file() else [])
+    with SessaoNavegador() as sessao:
+        sessao.pagina.goto(link, wait_until="domcontentloaded")
+        console.print(Panel(
+            "A vaga abriu no navegador do agente. Entre na conta se o site pedir (login é seu) e clique em "
+            "'Candidatar-se'.\nEm cada formulário, o agente preenche nome, e-mail, telefone, cidade, links e anexa o "
+            "currículo sob medida, só em campos vazios.\nConfira tudo, responda o que faltar e clique em ENVIAR você "
+            "mesmo. Depois feche o navegador.", title="Candidatura no site", border_style="magenta"))
+
+        def avisar(endereco: str, rotulos: list[str]) -> None:
+            console.print(f"[green]Preenchido:[/green] {escape(', '.join(rotulos))}")
+
+        acompanhar(sessao.pagina.context, [dominio_raiz(link)], campos, ao_preencher=avisar)
+
+
+def _preencher_linkedin(link: str, central, cv: Path | None, perfil, contrato: str | None,
+                        esperar_fechar: bool = False) -> Path | None:
     """Candidatura Simplificada no navegador do agente: preenche e avança, para antes de enviar (RN-04 por opção)."""
     from .linkedin.automatico import LoginNecessario, candidatura_simplificada, responder_com_perfil
     from .navegador import SessaoNavegador
@@ -219,7 +253,12 @@ def _preencher_linkedin(link: str, central, cv: Path | None, perfil, contrato: s
         if resultado.sem_resposta:
             console.print(f"[yellow]Só você pode responder:[/yellow] {escape('; '.join(resultado.sem_resposta))}")
         console.print(f"[bold]{escape(resultado.mensagem)}[/bold]")
-        typer.prompt("Tecle Enter depois de revisar (e enviar, se quiser) para fechar o navegador", default="", show_default=False)
+        if esperar_fechar:
+            console.print("Quando terminar no LinkedIn, feche o navegador do agente.")
+            _esperar_fechar(sessao)
+        else:
+            typer.prompt("Tecle Enter depois de revisar (e enviar, se quiser) para fechar o navegador", default="",
+                         show_default=False)
         return resultado.captura if resultado.parou != "sem_candidatura_simplificada" else None
 
 
@@ -278,6 +317,8 @@ def candidatar(
     nivel: str | None = typer.Option(None, "--nivel"),
     idioma: str = typer.Option("pt", "--idioma"),
     copiloto: bool = typer.Option(False, "--copiloto", help="Não abrir o navegador, mesmo em plataforma assistida."),
+    direto: bool = typer.Option(False, "--direto", help="Abre a vaga no site e preenche lá (sem perguntas aqui): "
+                                "o que o botão 'Quero me candidatar' do app usa."),
 ) -> None:
     """Monta o kit, preenche no modo da plataforma e para na revisão; o envio é seu (RF-CA-01 a RF-CA-07)."""
     from .analise.lastro import verificar_lastro
@@ -312,9 +353,8 @@ def candidatar(
     plataforma = plataforma_da_url(vaga.link) if vaga.link else None
     linkedin_automatico = (plataforma == "linkedin" and central.linkedin_automatico.ativo and not copiloto
                            and not central.somente_sugestao and playwright_disponivel())
-    if linkedin_automatico and perguntas is None:
-        # No LinkedIn automático, as perguntas do formulário são lidas e respondidas na hora, no navegador.
-        console.print("[dim]LinkedIn automático: o agente responde as perguntas do formulário direto no navegador.[/dim]")
+    if (linkedin_automatico or direto) and perguntas is None:
+        # As perguntas do formulário ficam no próprio site (no LinkedIn automático, o agente responde lá mesmo).
         lista_perguntas: list[tuple[str, bool | None]] = []
     else:
         lista_perguntas = _ler_perguntas(perguntas)
@@ -330,7 +370,7 @@ def candidatar(
                 definir_resposta(banco, p.chave, p.resposta)
                 salvar_respostas(banco)
 
-    while True:
+    while not direto:  # no modo direto, o clique em "Quero me candidatar" aprova o kit; você revisa tudo no site
         _mostrar_kit(kit)
         escolha = _escolha("[a]provar o kit, [e]ditar a mensagem ou [c]ancelar", {"a", "e", "c"})
         if escolha == "c":
@@ -357,6 +397,30 @@ def candidatar(
 
     modo = central.modos_plataforma.get(candidatura.plataforma or "", "copiloto")
     captura = None
+    if direto:
+        if not vaga.link:
+            _sair("Esta vaga não tem link para abrir. Use 'Adicionar vaga por link' com o endereço da vaga.")
+        if central.somente_sugestao or not playwright_disponivel():
+            _sair("O modo só sugestões está ligado (ou falta o navegador do agente): abra a vaga você mesmo.")
+        from .navegador import NavegadorOcupado
+
+        cv = Path(arquivos[0]) if arquivos else None
+        try:
+            if linkedin_automatico:
+                captura = _preencher_linkedin(vaga.link, central, cv, perfil, vaga.contrato, esperar_fechar=True)
+                modo = "assistido"
+            else:
+                _candidatura_no_site(vaga.link, cv, perfil)
+                modo = "assistido"
+        except NavegadorOcupado as erro:
+            _sair(f"{erro}")
+        if typer.confirm("Você enviou a candidatura no site?", default=False):
+            _registrar_envio(candidatura, kit, modo, captura)
+            salvar_candidaturas(colecao)
+            console.print("[green]Candidatura registrada como enviada; follow-up agendado.[/green]")
+        else:
+            console.print("Tudo bem: a candidatura ficou preparada (kit e currículo guardados) e não foi marcada como enviada.")
+        return
     usar_assistido = linkedin_automatico or (
         modo == "assistido" and not copiloto and vaga.link and not central.somente_sugestao and playwright_disponivel())
     if usar_assistido:

@@ -194,6 +194,11 @@ class _Trava:
             self._arquivo = None
 
 
+def fechado_pela_pessoa(erro: BaseException) -> bool:
+    """A janela do navegador foi fechada no meio da tarefa: não é defeito do site, não para a fonte."""
+    return type(erro).__name__ == "TargetClosedError" or "has been closed" in str(erro)
+
+
 def erro_curto(erro: BaseException, limite: int = 220) -> str:
     """Primeira linha útil de um erro (o Playwright anexa o log inteiro do Chromium)."""
     linha = next((l.strip() for l in str(erro).splitlines() if l.strip()), type(erro).__name__)

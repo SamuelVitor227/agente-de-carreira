@@ -16,6 +16,7 @@ from pathlib import Path
 
 from ..ia import TAREFAS, carregar_usos, lote_que_cobre, registrar_pedido, salvar_usos, sanitizar, valores_sensiveis
 from ..models import PerfilMestre
+from ..operacao import andamento
 from ..operacao.saude import RegistroSaude, problema_no_email
 from .aderencia import IndiceTFIDF, calcular_aderencia, documento_perfil, documento_vaga
 from .coleta import (
@@ -27,7 +28,9 @@ from .coleta import (
     dominio_em,
     ler_eml,
     ler_imap,
+    parece_alerta,
     robots_permite,
+    so_links_de_rastreamento,
     vaga_de_html,
     vagas_de_email,
     vagas_de_pagina,
@@ -59,6 +62,8 @@ PodeLer = Callable[[str], bool]  # modo somente sugestão e modo por plataforma 
 ColetorExtra = Callable[[BaseVagas], tuple[list[VagaBruta], list[str], list[str]]]
 # Fonte a mais de e-mails: recebe os message-ids já lidos e devolve ([(message-id, e-mail)], avisos, paradas).
 LeitorEmail = Callable[[set[str]], tuple[list, list[str], list[str]]]
+# Lê a descrição de vagas que chegaram sem ela; devolve quantas ganharam descrição.
+Enriquecedor = Callable[[list[VagaEncontrada]], int]
 
 
 def de_bruta(bruta: VagaBruta) -> VagaEncontrada:
@@ -110,6 +115,11 @@ def coletar(
             erros.append(f"{nome}: adaptador parado; o e-mail ficou guardado (agente saude reativar {nome})")
             return False
         vagas = vagas_de_email(msg)
+        if not vagas and not parece_alerta(msg):
+            return True  # e-mail comum do site (termos, confirmação de cadastro, dicas): não é alerta
+        if not vagas and so_links_de_rastreamento(msg):
+            erros.append(f"{nome}: alerta só com links de rastreamento (formato não suportado); ignorado")
+            return True
         if problema := problema_no_email(plataforma, links, len(vagas), conhecido):
             if saude.falha(nome, problema, parar=True):
                 falhas.append(f"{nome}: {problema}")
@@ -120,6 +130,7 @@ def coletar(
         brutas.extend(vagas)
         return True
 
+    andamento.etapa("Lendo os alertas de vaga do e-mail")
     if pasta_emails and pasta_emails.is_dir():
         processados = pasta_emails / "processados"
         for caminho in sorted(pasta_emails.glob("*.eml")):
@@ -154,6 +165,7 @@ def coletar(
                     base.lembrar_email(msgid)
 
     for leitor in leitores_email:  # ex.: Outlook na web, no navegador do agente (opção do usuário)
+        andamento.etapa("Lendo os alertas no Outlook")
         mensagens, avisos, paradas = leitor(set(base.emails_processados))
         erros += avisos
         falhas += paradas
@@ -196,33 +208,63 @@ def coletar(
 
 
 def enriquecer(vagas: list[VagaEncontrada], config: ConfigVagas, baixar_fn: Baixador, dormir: Dormir,
-               pode_ler: PodeLer = _sempre) -> int:
-    """Abre a página das vagas sem descrição, só em domínios permitidos e com robots.txt respeitado."""
-    abertas = 0
-    for vaga in vagas:
-        if vaga.descricao or not vaga.link or not dominio_em(vaga.link, config.dominios_permitidos):
-            continue
-        if not pode_ler(vaga.link):
-            continue
-        try:
-            if not robots_permite(vaga.link, baixar_fn):
+               pode_ler: PodeLer = _sempre, paralelo: int = 1) -> int:
+    """Abre a página das vagas sem descrição, só em domínios permitidos e com robots.txt respeitado.
+
+    Sites diferentes são lidos em paralelo (até `paralelo` ao mesmo tempo); dentro de um mesmo site, uma página
+    por vez com pausa (RN-05). O robots.txt de cada site é consultado uma vez só.
+    """
+    from collections import defaultdict
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Lock
+    from urllib.parse import urlparse
+
+    a_ler = [v for v in vagas if not v.descricao and v.link and dominio_em(v.link, config.dominios_permitidos)]
+    por_site: dict[str, list[VagaEncontrada]] = defaultdict(list)
+    for vaga in a_ler:
+        por_site[urlparse(vaga.link).netloc.lower()].append(vaga)
+    trava = Lock()
+    contagem = {"tentadas": 0, "abertas": 0}
+
+    def ler_site(lista: list[VagaEncontrada]) -> None:
+        robots: dict[str, bool] = {}
+        for vaga in lista:
+            with trava:
+                contagem["tentadas"] += 1
+                andamento.etapa("Lendo as descrições das vagas novas", contagem["tentadas"], len(a_ler))
+            if not pode_ler(vaga.link):
                 continue
-            status, html = baixar_fn(vaga.link)
-            if status in (404, 410):
-                vaga.motivo_expiracao = f"o anúncio saiu do ar (HTTP {status})"
+            try:
+                site = urlparse(vaga.link).netloc.lower()
+                if site not in robots:
+                    robots[site] = robots_permite(vaga.link, baixar_fn)
+                if not robots[site]:
+                    continue
+                status, html = baixar_fn(vaga.link)
+                if status in (404, 410):
+                    vaga.motivo_expiracao = f"o anúncio saiu do ar (HTTP {status})"
+                    continue
+                if status >= 400:
+                    continue
+                pagina = de_bruta(vaga_de_html(vaga.link, html, "pagina"))
+                if pagina.descricao:
+                    with trava:
+                        mesclar(vaga, pagina)
+                        reextrair(vaga)
+                        contagem["abertas"] += 1
+            except ColetaErro:
                 continue
-            if status >= 400:
-                continue
-            pagina = de_bruta(vaga_de_html(vaga.link, html, "pagina"))
-            if pagina.descricao:
-                mesclar(vaga, pagina)
-                reextrair(vaga)
-                abertas += 1
-        except ColetaErro:
-            continue
-        finally:
-            dormir(INTERVALO_SEGUNDOS)
-    return abertas
+            finally:
+                dormir(INTERVALO_SEGUNDOS)
+
+    grupos = list(por_site.values())
+    if paralelo <= 1 or len(grupos) <= 1:
+        for grupo in grupos:
+            ler_site(grupo)
+    else:
+        with ThreadPoolExecutor(max_workers=min(paralelo, len(grupos)), thread_name_prefix="descricoes") as pool:
+            list(pool.map(ler_site, grupos))
+    return contagem["abertas"]
 
 
 # ---------------------------------------------------------------- triagem
@@ -235,7 +277,7 @@ def avaliar(
     busca, motivos = avaliar_filtros(vaga, config, perfil, hoje)
     vaga.busca = busca
     vaga.motivos_eliminacao = motivos
-    if motivos and vaga.status == "nova":
+    if motivos and vaga.status in ("nova", "no_resumo"):
         vaga.status = "eliminada"
     elif not motivos and vaga.status == "eliminada":
         vaga.status = "nova"
@@ -286,18 +328,25 @@ class Processamento:
 def processar(
     brutas: list[VagaBruta], base: BaseVagas, perfil: PerfilMestre, config: ConfigVagas, hoje: date, *,
     baixar_fn: Baixador = baixar, dormir: Dormir = time.sleep, enriquecer_links: bool = True,
-    verificar_links: bool = False, pode_ler: PodeLer = _sempre,
+    verificar_links: bool = False, pode_ler: PodeLer = _sempre, enriquecedores: Sequence[Enriquecedor] = (),
+    paralelo: int = 1,
 ) -> Processamento:
     adicionadas, por_mescla, destinos = incorporar(base, [de_bruta(b) for b in brutas])
     for vaga in por_mescla:
         reextrair(vaga)
-    abertas = enriquecer(adicionadas, config, baixar_fn, dormir, pode_ler) if enriquecer_links else 0
+    abertas = enriquecer(adicionadas, config, baixar_fn, dormir, pode_ler, paralelo) if enriquecer_links else 0
+    for extra in enriquecedores:  # ex.: descrições das vagas do LinkedIn pelo navegador do agente (opção do usuário)
+        sem_descricao = adicionadas + [v for v in base.itens if v not in adicionadas and v.status in REAVALIAVEIS]
+        abertas += extra([v for v in sem_descricao if not v.descricao])
 
-    a_avaliar = adicionadas + [v for v in por_mescla if v.status in ("nova", "eliminada") and v not in adicionadas]
+    # Também as vagas já guardadas: uma mudança no perfil (ex.: formação) vale na próxima busca.
+    novas_ids = {id(v) for v in adicionadas}
+    a_avaliar = adicionadas + [v for v in base.itens if id(v) not in novas_ids and v.status in REAVALIAVEIS]
     ativas = [v for v in base.itens if v.status != "expirada"]
     indice = IndiceTFIDF([documento_perfil(perfil)] + [documento_vaga(v) for v in ativas])
     vetor_perfil = indice.vetor(documento_perfil(perfil))
-    for vaga in a_avaliar:
+    for i, vaga in enumerate(a_avaliar, 1):
+        andamento.etapa("Dando nota às vagas", i, len(a_avaliar))
         avaliar(vaga, perfil, config, indice, vetor_perfil, hoje)
 
     expiradas = expirar(base, hoje, config, baixar_fn=baixar_fn, dormir=dormir, verificar_links=verificar_links,
@@ -308,6 +357,32 @@ def processar(
         eliminadas=[v for v in a_avaliar if v.status == "eliminada"], expiradas=expiradas, alertas=alertas,
         arquivo_alerta=salvar_alerta(alertas) if alertas else None,
     )
+
+
+REAVALIAVEIS = ("nova", "eliminada", "no_resumo")
+
+
+def reavaliar_base(base: BaseVagas, perfil: PerfilMestre, config: ConfigVagas, hoje: date):
+    """Dá nota de novo a todas as vagas ativas com o perfil atual e refaz o resumo do dia (sem buscar nada)."""
+    ativas = [v for v in base.itens if v.status != "expirada"]
+    indice = IndiceTFIDF([documento_perfil(perfil)] + [documento_vaga(v) for v in ativas])
+    vetor_perfil = indice.vetor(documento_perfil(perfil))
+    from .coleta import separar_empresa_local
+
+    for vaga in base.itens:  # corrige vagas guardadas com o formato antigo de leitura dos alertas
+        vaga.empresa, vaga.local = separar_empresa_local(vaga.empresa, vaga.local)
+    a_avaliar = [v for v in base.itens if v.status in REAVALIAVEIS]
+    antes = {id(v): v.status for v in a_avaliar}
+    for i, vaga in enumerate(a_avaliar, 1):
+        andamento.etapa("Dando nota às vagas", i, len(a_avaliar))
+        avaliar(vaga, perfil, config, indice, vetor_perfil, hoje)
+    liberadas = sum(1 for v in a_avaliar if antes[id(v)] == "eliminada" and v.status != "eliminada")
+    eliminadas = [v for v in a_avaliar if v.status == "eliminada"]
+    resumo = montar_resumo(base, config, hoje, eliminadas=eliminadas, expiradas=0, coletadas=0, erros=[],
+                           incluir_ja_recomendadas=True)  # reavaliar mostra tudo o que está valendo agora
+    arquivo = salvar_resumo(resumo, config)
+    marcar_no_resumo(base, resumo)
+    return liberadas, resumo, arquivo
 
 
 # ---------------------------------------------------------------- rodada completa
@@ -360,22 +435,38 @@ def executar_rodada(
     enriquecer_links: bool = True, verificar_links: bool = False, motor_justificativa: str = "perguntar",
     saude: RegistroSaude | None = None, pode_ler: PodeLer = _sempre,
     coletores_extras: Sequence[ColetorExtra] = (), leitores_email: Sequence[LeitorEmail] = (),
+    enriquecedores: Sequence[Enriquecedor] = (), paralelo: int = 1,
 ) -> ResultadoRodada:
+    from concurrent.futures import ThreadPoolExecutor
+
     inicio = datetime.now(timezone.utc)
-    brutas, erros, falhas = coletar(
-        config, base, hoje, pasta_emails=pasta_emails, imap=imap, imap_factory=imap_factory,
-        baixar_fn=baixar_fn, dormir=dormir, usar_paginas=usar_paginas, saude=saude, pode_ler=pode_ler,
-        leitores_email=leitores_email,
-    )
-    for coletor in coletores_extras:  # ex.: navegador automático no LinkedIn, só se o usuário ligou (RN-04)
-        extras, avisos, paradas = coletor(base)
+    # Fontes com navegador próprio (ex.: portal da Gupy) rodam em paralelo com o resto; as que usam o
+    # navegador da sua conta (Outlook, LinkedIn, Glassdoor) seguem uma de cada vez.
+    independentes = [c for c in coletores_extras if getattr(c, "paralelo", False) and paralelo > 1]
+    em_fila = [c for c in coletores_extras if c not in independentes]
+    pool = ThreadPoolExecutor(max_workers=max(1, len(independentes)), thread_name_prefix="fonte") if independentes else None
+    futuros = [pool.submit(c, base) for c in independentes] if pool else []
+    try:
+        brutas, erros, falhas = coletar(
+            config, base, hoje, pasta_emails=pasta_emails, imap=imap, imap_factory=imap_factory,
+            baixar_fn=baixar_fn, dormir=dormir, usar_paginas=usar_paginas, saude=saude, pode_ler=pode_ler,
+            leitores_email=leitores_email,
+        )
+        resultados = [coletor(base) for coletor in em_fila]  # ex.: Glassdoor, LinkedIn automático (RN-04)
+        resultados += [f.result() for f in futuros]
+    finally:
+        if pool:
+            pool.shutdown(wait=True)
+    for extras, avisos, paradas in resultados:
         brutas += extras
         erros += avisos
         falhas += paradas
     proc = processar(
         brutas, base, perfil, config, hoje, baixar_fn=baixar_fn, dormir=dormir,
         enriquecer_links=enriquecer_links, verificar_links=verificar_links, pode_ler=pode_ler,
+        enriquecedores=enriquecedores, paralelo=paralelo,
     )
+    andamento.etapa("Montando o resumo do dia")
     resumo = montar_resumo(
         base, config, hoje, eliminadas=proc.eliminadas, expiradas=len(proc.expiradas),
         coletadas=len(brutas), erros=erros,

@@ -232,6 +232,19 @@ def ler_resultados(pagina, url: str, cfg: LinkedInAutomatico, dormir: Dormir) ->
 JS_JSONLD = "() => [...document.querySelectorAll('script[type=\"application/ld+json\"]')].map(s => s.textContent || '')"
 
 
+_LOCAL_TOPO = re.compile(r"^\s*([^\n·]+?,[^\n·]+?)\s+·\s+(?:há|h[áa]\s|reposted|publicad|\d)", re.I | re.M)
+_MODELOS_TOPO = {"presencial": "presencial", "híbrido": "hibrido", "hibrido": "hibrido", "remoto": "remoto",
+                 "on-site": "presencial", "hybrid": "hibrido", "remote": "remoto"}
+
+
+def local_e_modelo_do_topo(texto: str) -> tuple[str | None, str | None]:
+    """Do topo da vaga no LinkedIn: ('Nova Lima, Minas Gerais, Brasil', 'presencial')."""
+    m = _LOCAL_TOPO.search(texto or "")
+    modelo = next((_MODELOS_TOPO[l.strip().lower()] for l in (texto or "").splitlines()
+                   if l.strip().lower() in _MODELOS_TOPO), None)
+    return (m.group(1).strip() if m else None), modelo
+
+
 def ler_detalhe(pagina, vaga: VagaBruta, cfg: LinkedInAutomatico, dormir: Dormir) -> VagaBruta:
     """Abre a vaga e completa descrição (e o que o JSON-LD trouxer)."""
     pagina.goto(vaga.link, wait_until="domcontentloaded")
@@ -249,6 +262,14 @@ def ler_detalhe(pagina, vaga: VagaBruta, cfg: LinkedInAutomatico, dormir: Dormir
             if alvo.count():
                 dados["descricao"] = alvo.first.inner_text().strip()
                 break
+    if not vaga.local or not vaga.modelo:
+        # Topo da vaga: "Nova Lima, Minas Gerais, Brasil · há 2 dias · 30 candidaturas" e uma linha "Presencial".
+        topo = pagina.evaluate("() => ((document.querySelector('main') || document.body).innerText || '').slice(0, 900)")
+        local_topo, modelo_topo = local_e_modelo_do_topo(topo)
+        if local_topo and not vaga.local:
+            dados["local"] = local_topo
+        if modelo_topo and not vaga.modelo:
+            dados["modelo"] = modelo_topo
     if not dados.get("empresa") and not vaga.empresa:
         # O título da aba é "Cargo | Empresa | LinkedIn".
         partes = [p.strip() for p in (pagina.title() or "").split("|")]
@@ -275,7 +296,10 @@ def buscar_vagas(pagina, config: ConfigVagas, cfg: LinkedInAutomatico, links_con
         resultado.avisos.append("LinkedIn: nenhuma busca salva para pesquisar")
         return resultado
     vazias = 0
+    from ..operacao import andamento
+
     for i, (nome, url) in enumerate(lista):
+        andamento.etapa("LinkedIn: pesquisando vagas", i + 1, len(lista))
         if i:
             pausa(cfg, dormir, aleatorio)
         vagas = ler_resultados(pagina, url, cfg, dormir)
@@ -291,6 +315,7 @@ def buscar_vagas(pagina, config: ConfigVagas, cfg: LinkedInAutomatico, links_con
     novas = [v for link, v in encontradas.items() if link not in links_conhecidos]
     for j, vaga in enumerate(novas):
         if j < cfg.detalhes_por_rodada:
+            andamento.etapa("LinkedIn: lendo as vagas novas", j + 1, min(len(novas), cfg.detalhes_por_rodada))
             pausa(cfg, dormir, aleatorio)
             try:
                 vaga = ler_detalhe(pagina, vaga, cfg, dormir)
@@ -311,7 +336,7 @@ def coletor_da_rodada(config: ConfigVagas, cfg: LinkedInAutomatico, saude, *, ab
     def coletar(base) -> tuple[list[VagaBruta], list[str], list[str]]:
         if not saude.pode_usar(ADAPTADOR):
             return [], [f"{ADAPTADOR}: parado após erro (agente saude reativar {ADAPTADOR})"], []
-        from ..navegador import NavegadorOcupado, SessaoNavegador, erro_curto, playwright_disponivel
+        from ..navegador import NavegadorOcupado, SessaoNavegador, erro_curto, fechado_pela_pessoa, playwright_disponivel
 
         if abrir_sessao is None and not playwright_disponivel():
             return [], ["LinkedIn: o navegador automático precisa do Playwright ('uv sync')"], []
@@ -328,6 +353,8 @@ def coletor_da_rodada(config: ConfigVagas, cfg: LinkedInAutomatico, saude, *, ab
             parou = saude.falha(ADAPTADOR, str(erro), parar=True)
             return [], [f"LinkedIn: {erro}"], [f"{ADAPTADOR}: {erro}"] if parou else []
         except Exception as erro:  # noqa: BLE001 - a busca no LinkedIn não derruba a rodada
+            if fechado_pela_pessoa(erro):
+                return [], ["LinkedIn: o navegador do agente foi fechado no meio da busca; fica para a próxima rodada"], []
             saude.falha(ADAPTADOR, erro_curto(erro))
             return [], [f"LinkedIn: {erro_curto(erro)}"], []
         saude.sucesso(ADAPTADOR)
@@ -538,3 +565,58 @@ def responder_com_perfil(perfil, banco, contrato: str | None = None) -> Callable
         return responder(rotulo, perfil, banco, contrato).resposta
 
     return responder_rotulo
+
+
+# ---------------------------------------------------------------- descrições das vagas dos alertas
+
+def enriquecedor_da_rodada(cfg: LinkedInAutomatico, saude, *, abrir_sessao=None, dormir: Dormir = time.sleep,
+                           limite: int | None = None):
+    """Abre no navegador do agente as vagas do LinkedIn sem descrição (ex.: as dos alertas) e lê a descrição.
+
+    Só leitura, com pausas; no máximo `limite` vagas (padrão: detalhes_por_rodada). Devolve quantas ganharam descrição.
+    """
+    def enriquecer(vagas) -> int:
+        from ..radar.coleta import separar_empresa_local
+
+        for v in vagas:  # "Empresa · Cidade" vira empresa e local antes de qualquer leitura
+            v.empresa, v.local = separar_empresa_local(v.empresa, v.local)
+        alvo = [v for v in vagas if (not v.descricao or not v.local) and v.link and "linkedin.com/jobs/view/" in v.link]
+        alvo = sorted(alvo, key=lambda v: -v.nota)[:limite or cfg.detalhes_por_rodada]  # as de maior nota primeiro
+        if not alvo or not saude.pode_usar(ADAPTADOR):
+            return 0
+        from ..navegador import NavegadorOcupado, SessaoNavegador
+        from ..operacao import andamento
+        from ..radar.dedup import mesclar
+        from ..radar.rodada import de_bruta, reextrair
+
+        lidas = 0
+        try:
+            with (abrir_sessao or SessaoNavegador)() as sessao:
+                for i, vaga in enumerate(alvo, 1):
+                    andamento.etapa("LinkedIn: lendo a descrição das vagas dos alertas", i, len(alvo))
+                    if i > 1:
+                        pausa(cfg, dormir)
+                    bruta = VagaBruta(titulo=vaga.titulo, empresa=vaga.empresa, local=vaga.local, link=vaga.link,
+                                      fonte_tipo="pagina", fonte_origem=ORIGEM)
+                    try:
+                        lida = ler_detalhe(sessao.pagina, bruta, cfg, dormir)
+                    except LoginNecessario:
+                        raise
+                    except Exception:  # noqa: BLE001 - uma vaga com problema não para as outras
+                        continue
+                    if lida.descricao or (lida.local and not vaga.local):
+                        if lida.local and not vaga.local:
+                            vaga.local = lida.local
+                        if lida.modelo and not vaga.modelo:
+                            vaga.modelo = lida.modelo
+                        if lida.descricao and not vaga.descricao:
+                            mesclar(vaga, de_bruta(lida))
+                            reextrair(vaga)
+                        lidas += 1
+        except (NavegadorOcupado, LoginNecessario):
+            return lidas
+        if lidas:
+            saude.sucesso(ADAPTADOR)
+        return lidas
+
+    return enriquecer

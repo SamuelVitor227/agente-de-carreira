@@ -76,6 +76,13 @@ def preencher_vazios(pagina, campos: list[CampoParaPreencher], ja_feitos: set[tu
         valor = campo.valor
         if campo.id == "basico:nome" and not tem_sobrenome:
             valor = por_id.get("basico:nome_completo", campo).valor  # "Nome" sozinho = nome completo
+        if campo.arquivo:  # currículo: só no primeiro campo de arquivo vazio da página
+            feito = _anexar(pagina, campo)
+            if feito is not None:
+                ja_feitos.add(chave)
+                if feito:
+                    feitos.append(campo.rotulo)
+            continue
         alvo = localizar(pagina, campo)
         if alvo is None:
             continue
@@ -101,6 +108,39 @@ def preencher_vazios(pagina, campos: list[CampoParaPreencher], ja_feitos: set[tu
         ja_feitos.add(chave)
         feitos.append(campo.rotulo)
     return feitos
+
+
+def campo_curriculo(caminho) -> CampoParaPreencher:
+    return CampoParaPreencher(id="basico:cv", rotulo="Currículo (arquivo)", valor=str(caminho), arquivo=True)
+
+
+def _anexar(pagina, campo: CampoParaPreencher) -> bool | None:
+    """Anexa o currículo no primeiro campo de arquivo ainda vazio. None = a página não tem campo de arquivo."""
+    entradas = pagina.locator("input[type=file]")
+    try:
+        if not entradas.count():
+            return None
+        for k in range(entradas.count()):
+            entrada = entradas.nth(k)
+            if entrada.evaluate("e => e.disabled || (e.files && e.files.length > 0)"):
+                continue
+            aceita = (entrada.get_attribute("accept") or "").lower().replace(" ", "")
+            tipos = [t for t in aceita.split(",") if t]
+            if tipos and not any(t in (".pdf", "application/pdf", "*/*", "*", "application/*") for t in tipos):
+                continue  # campo de foto ("image/*"), por exemplo
+            entrada.set_input_files(campo.valor, timeout=5_000)
+            return True
+        return False
+    except Exception:  # noqa: BLE001 - campo sumiu durante a passada
+        return None
+
+
+def dominio_raiz(url: str) -> str:
+    """'https://omega.gupy.io/jobs/1' → 'gupy.io'; 'https://www.vagas.com.br/x' → 'vagas.com.br'."""
+    partes = dominio_de(url).split(".")
+    if len(partes) >= 3 and partes[-1] == "br" and partes[-2] in ("com", "org", "net", "gov"):
+        return ".".join(partes[-3:])
+    return ".".join(partes[-2:])
 
 
 def dominio_de(url: str) -> str:

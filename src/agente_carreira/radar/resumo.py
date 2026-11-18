@@ -76,9 +76,10 @@ def item_resumo(vaga: VagaEncontrada, config: ConfigVagas) -> ItemResumo:
 def montar_resumo(
     base: BaseVagas, config: ConfigVagas, hoje: date, *,
     eliminadas: list[VagaEncontrada] | None = None, expiradas: int = 0, coletadas: int = 0,
-    erros: list[str] | None = None,
+    erros: list[str] | None = None, incluir_ja_recomendadas: bool = False,
 ) -> Resumo:
-    novas = [v for v in base.itens if v.status == "nova"]
+    estados = ("nova", "no_resumo") if incluir_ja_recomendadas else ("nova",)
+    novas = [v for v in base.itens if v.status in estados]
     recomendaveis = sorted((v for v in novas if not v.risco), key=lambda v: -v.nota)
     com_risco = [v for v in novas if v.risco]
     contagem = Counter(m for v in (eliminadas or []) for m in v.motivos_eliminacao)

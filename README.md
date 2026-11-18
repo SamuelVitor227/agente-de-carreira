@@ -247,6 +247,21 @@ Por padrão, o agente não entra na sua conta. Os dados do perfil vêm da export
 - **Glassdoor:** só pelos alertas de e-mail. O site bloqueia robôs (verificação "Humans only"), e o agente não contorna verificações.
 - **Termos.** Além dos cargos de cada área, todas as buscas aceitam termos gerais de TI em início de carreira: estágio TI, trainee, desenvolvedor, programador, analista de TI, suporte etc. Variações como jr/júnior, estagiário/estágio e intern são unificadas.
 
+### Andamento e desempenho
+
+- **Andamento:** toda busca (inclusive a das 7h) grava a etapa atual. No app, uma faixa no topo de todas as telas mostra "Busca de vagas rodando: etapa · há N min", e o botão "Ver andamento" mostra o histórico. No terminal: `agente andamento`. Duas buscas nunca rodam ao mesmo tempo.
+- **Desempenho:** até 20% da RAM (`desempenho.memoria_max_percentual`) vira tarefas em paralelo: descrições de sites diferentes lidas ao mesmo tempo (com pausa dentro de cada site), robots.txt consultado uma vez por site e o portal da Gupy rodando junto com o Outlook e o LinkedIn.
+- **Região:** presencial e híbrido só em Belo Horizonte e nos 34 municípios da região metropolitana ("BH e região", "Grande BH" e "RMBH" também valem); remoto vale de qualquer lugar. Vaga sem modelo informado conta como presencial, e vaga presencial sem local fica de fora (dá para conferir em "Todas").
+- `agente vagas reavaliar [--ler-descricoes N]` dá nota de novo às vagas guardadas com o perfil atual, por exemplo depois de mudar a formação.
+
+### Currículo
+
+O PDF sai de um modelo HTML/CSS impresso pelo Chromium: nome em destaque, contato numa linha, competências agrupadas (Linguagens, Back-end, Front-end e mobile, Dados, Ferramentas, Métodos), datas à direita e 1 página para estágio e júnior, com a fonte reduzida aos poucos se precisar. Continua legível por ATS: uma coluna, texto real, títulos padrão, sem tabelas nem imagens. O Word segue o mesmo visual. Para estágio, trainee e júnior, a ordem é Resumo → Formação → Competências → Projetos → Experiências → Certificações → Idiomas.
+
+### Quero me candidatar
+
+No app, "Quero me candidatar" (e "Candidatar às melhores") abre a vaga no site, no navegador do agente, com o currículo sob medida pronto. No LinkedIn, com a automação ligada, a Candidatura Simplificada é preenchida. Na Gupy e nos outros sites, o agente preenche os dados básicos e anexa o currículo em cada formulário. Você confere e clica em Enviar. Ao fechar o navegador, o app pergunta se você enviou e registra no funil (`agente candidatar ID --direto`).
+
 ### Gupy com preenchimento automático
 
 `agente plataformas abrir gupy`, ou o botão "Abrir a Gupy" em Meu perfil, abre a Gupy no navegador do agente. Em qualquer formulário, o agente preenche nome, e-mail, telefone, cidade, estado, país e links. Ele só preenche campos vazios: nunca apaga o que você escreveu, nunca preenche CPF nem senha e nunca clica em salvar ou enviar.

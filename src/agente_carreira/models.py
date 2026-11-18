@@ -48,6 +48,7 @@ class Area(str, Enum):
 class Periodo(BaseModel):
     inicio: date
     fim: date | None = None  # None = atual
+    so_ano: bool = False     # o mês não é conhecido: o currículo mostra só o ano (RN-02, nada inventado)
 
     @model_validator(mode="after")
     def _fim_depois_do_inicio(self) -> "Periodo":

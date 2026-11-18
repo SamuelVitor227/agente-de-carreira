@@ -440,10 +440,21 @@ class App:
         rotulo(lateral, "Nada é enviado nem publicado\nsem o seu sim.", F_PEQUENA, "#94a3b8").pack(
             side="bottom", anchor="w", padx=22, pady=18)
 
-        self.conteudo = tk.Frame(self.raiz, bg=FUNDO)
-        self.conteudo.pack(side="left", fill="both", expand=True)
+        direita = tk.Frame(self.raiz, bg=FUNDO)
+        direita.pack(side="left", fill="both", expand=True)
+        self._faixa = tk.Frame(direita, bg=DESTAQUE_CLARO, padx=24, pady=8)  # andamento: aparece só quando há algo
+        self._faixa_texto = rotulo(self._faixa, "", F_NEGRITO, DESTAQUE, bg=DESTAQUE_CLARO)
+        self._faixa_texto.pack(side="left")
+        Botao(self._faixa, "Ver andamento", self.ver_andamento, "link").pack(side="right")
+        self._faixa_fechar = Botao(self._faixa, "Ocultar", self._ocultar_faixa, "link")
+        self._faixa_estado: dict | None = None
+        self._faixa_oculta_ate: str | None = None
+        self._faixa_giro = 0
+        self.conteudo = tk.Frame(direita, bg=FUNDO)
+        self.conteudo.pack(fill="both", expand=True)
         self.pagina_atual = "inicio"
         self.mostrar("inicio")
+        self.raiz.after(400, self._atualizar_faixa)
 
     # -- navegação
     def mostrar(self, pagina: str) -> None:
@@ -515,7 +526,7 @@ class App:
     def acao(self, chave: str) -> None:
         {
             "importar_cv": self.importar_cv, "conectar_linkedin": self.conectar_linkedin, "criar_busca": self.criar_busca,
-            "buscar_vagas": lambda: self.executar("Buscar vagas", ["vagas", "rodada"]),
+            "buscar_vagas": self.buscar_vagas,
             "saude": lambda: self.executar("Fontes de vagas", ["saude"]),
             "vagas": lambda: self.mostrar("vagas"), "candidaturas": lambda: self.mostrar("candidaturas"),
             "aprovacoes": lambda: self.mostrar("aprovacoes"),
@@ -764,10 +775,11 @@ class App:
 
         def candidatar():
             if (vid := selecionada()):
-                if messagebox.askyesno(NOME_APP, "O agente vai montar seu kit de candidatura: currículo sob medida, "
-                                       "mensagem e respostas do formulário.\n\nEle preenche e PARA antes de enviar: "
-                                       "quem clica em enviar é você. Continuar?", parent=self.raiz):
-                    self.executar("Candidatar-me", ["candidatar", vid])
+                if messagebox.askyesno(NOME_APP, "A vaga vai abrir no site (LinkedIn, Gupy...), no navegador do agente, "
+                                       "com o currículo sob medida já pronto.\n\nNo formulário, o agente preenche seus "
+                                       "dados e anexa o currículo. Você confere, responde o que faltar e clica em "
+                                       "ENVIAR. Depois é só fechar o navegador. Abrir a vaga?", parent=self.raiz):
+                    self.executar("Candidatar-me", ["candidatar", vid, "--direto"])
 
         def salvar():
             if (vid := selecionada()):
@@ -1116,11 +1128,11 @@ class App:
                                 "candidatura. Busque vagas novas ou escolha uma na lista.", parent=self.raiz)
             return
         lista = "\n".join(f"• {l.nota} · {l.titulo} — {l.empresa}" for l in escolhidas)
-        if not messagebox.askyesno(NOME_APP, f"O agente vai preparar e preencher {len(escolhidas)} candidatura(s), uma "
-                                   f"de cada vez:\n\n{lista}\n\nEm cada uma ele para antes do envio: você confere e "
-                                   "clica em Enviar. Continuar?", parent=self.raiz):
+        if not messagebox.askyesno(NOME_APP, f"As {len(escolhidas)} vaga(s) vão abrir no site, uma de cada vez:\n\n{lista}"
+                                   "\n\nEm cada uma, o agente preenche seus dados e anexa o currículo; você confere, "
+                                   "clica em ENVIAR e fecha o navegador para ir para a próxima. Começar?", parent=self.raiz):
             return
-        self.executar(f"Candidatar às {len(escolhidas)} melhores", [["candidatar", l.id] for l in escolhidas])
+        self.executar(f"Candidatar às {len(escolhidas)} melhores", [["candidatar", l.id, "--direto"] for l in escolhidas])
 
     # ---------------------------------------------------------------- aprovações
 
@@ -1318,6 +1330,90 @@ class App:
         ambiente = dict(os.environ, PATH=f"{scripts}{os.pathsep}{os.environ.get('PATH', '')}")
         subprocess.Popen(["cmd.exe", "/k", f"title {NOME_APP} & echo Digite: agente --help"], cwd=raiz_do_projeto(),
                          env=ambiente, creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0))
+
+    # ---------------------------------------------------------------- andamento (tarefas longas)
+
+    def buscar_vagas(self) -> None:
+        from ..operacao import andamento
+
+        if (estado := andamento.em_andamento("Busca de vagas")) is not None:
+            messagebox.showinfo(NOME_APP, "Já tem uma busca de vagas rodando:\n\n" + andamento.descrever(estado)
+                                + "\n\nAcompanhe pela faixa no topo ou em \"Ver andamento\".", parent=self.raiz)
+            self.ver_andamento()
+            return
+        self.executar("Buscar vagas", ["vagas", "rodada"])
+
+    def _ocultar_faixa(self) -> None:
+        if self._faixa_estado:
+            self._faixa_oculta_ate = self._faixa_estado.get("fim")
+        self._faixa.pack_forget()
+
+    def _atualizar_faixa(self) -> None:
+        from datetime import datetime, timedelta, timezone
+
+        from ..operacao import andamento
+
+        try:
+            estado = andamento.ler()
+        except Exception:  # noqa: BLE001 - a faixa nunca derruba o app
+            estado = None
+        anterior, self._faixa_estado = self._faixa_estado, estado
+        mostrar = False
+        if estado and estado.get("rodando"):
+            self._faixa_giro = (self._faixa_giro + 1) % 2
+            texto, cor, fundo = ("● " if self._faixa_giro else "○ ") + andamento.descrever(estado), DESTAQUE, DESTAQUE_CLARO
+            mostrar = True
+            self._faixa_fechar.pack_forget()
+        elif estado and estado.get("fim") and estado.get("fim") != self._faixa_oculta_ate:
+            fim = datetime.fromisoformat(estado["fim"])
+            if datetime.now(timezone.utc) - fim < timedelta(minutes=30):
+                ok = estado.get("situacao") == "concluida"
+                texto = ("✓ " if ok else "⚠ ") + andamento.descrever(estado)
+                cor, fundo = (DESTAQUE, DESTAQUE_CLARO) if ok else (ATENCAO, ATENCAO_CLARO)
+                mostrar = True
+                self._faixa_fechar.pack(side="right", padx=(0, 12))
+        if mostrar:
+            for widget in (self._faixa, self._faixa_texto):
+                widget.configure(bg=fundo)
+            self._faixa_texto.configure(text=texto, fg=cor)
+            if not self._faixa.winfo_ismapped():
+                self._faixa.pack(fill="x", before=self.conteudo)
+        elif self._faixa.winfo_ismapped():
+            self._faixa.pack_forget()
+        if anterior and anterior.get("rodando") and not (estado and estado.get("rodando")):
+            self.atualizar()  # terminou: a tela mostra as vagas novas
+        if self.raiz.winfo_exists():
+            self.raiz.after(3000, self._atualizar_faixa)
+
+    def ver_andamento(self) -> None:
+        from ..operacao import andamento
+
+        janela = tk.Toplevel(self.raiz)
+        janela.title(f"Andamento — {NOME_APP}")
+        janela.configure(bg=FUNDO, padx=20, pady=16)
+        janela.geometry("820x520")
+        janela.transient(self.raiz)
+        cabecalho = rotulo(janela, "", F_SUBTITULO)
+        cabecalho.pack(anchor="w")
+        rotulo(janela, "O que o agente fez nas tarefas longas (busca de vagas, e-mail, sites), da mais antiga para a mais "
+               "recente. Atualiza sozinho.", F_NORMAL, SUAVE, wraplength=760).pack(anchor="w", pady=(2, 10))
+        caixa = tk.Text(janela, font=F_SAIDA, bg=CARTAO, relief="flat", padx=12, pady=10, wrap="word",
+                        highlightthickness=1, highlightbackground=BORDA)
+        caixa.pack(fill="both", expand=True)
+
+        def atualizar():
+            if not janela.winfo_exists():
+                return
+            estado = andamento.ler()
+            cabecalho.configure(text=andamento.descrever(estado) if estado else "Nenhuma tarefa longa registrada ainda.")
+            caixa.configure(state="normal")
+            caixa.delete("1.0", "end")
+            caixa.insert("end", "\n".join(andamento.ultimas_linhas(80)) or "(vazio)")
+            caixa.configure(state="disabled")
+            caixa.see("end")
+            janela.after(3000, atualizar)
+
+        atualizar()
 
     def rodar(self) -> None:
         self.raiz.mainloop()

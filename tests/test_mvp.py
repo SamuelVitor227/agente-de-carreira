@@ -174,7 +174,8 @@ def test_ca03_pdf_le_experiencias_e_habilidades_sem_perda(tmp_path):
     texto = "\n".join(p.extract_text() for p in PdfReader(str(caminho)).pages)
     for item in [e.cargo for e in perfil.experiencias] + [e.empresa for e in perfil.experiencias] + perfil.competencias_tecnicas:
         assert item in texto, item
-    assert "03/2021 - 12/2022" in texto and "?" not in texto      # travessão vira hífen legível
+    # Modelo HTML/Chromium mantém o travessão (Unicode legível por ATS); o motor simples troca por hífen.
+    assert ("03/2021 – 12/2022" in texto or "03/2021 - 12/2022" in texto) and "?" not in texto
     assert paginas == 1
 
 

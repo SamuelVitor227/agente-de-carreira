@@ -213,6 +213,13 @@ def vagas_rodada(
     from .radar.coleta import config_imap
     from .radar.rodada import executar_rodada
 
+    from .operacao import andamento
+    from .operacao.recursos import trabalhadores
+
+    if (rodando := andamento.em_andamento("Busca de vagas")) is not None:
+        console.print(f"[yellow]Já tem uma busca de vagas rodando ({escape(andamento.descrever(rodando))}). "
+                      "Acompanhe com 'agente andamento' ou na faixa do app.[/yellow]")
+        raise typer.Exit(0)
     tarefas = carregar_tarefas()
     tarefa = garantir_tarefa_rodada(tarefas)
     salvar_tarefas(tarefas)
@@ -258,14 +265,23 @@ def vagas_rodada(
 
         console.print("[magenta]LinkedIn: buscando vagas no navegador do agente (modo automático que você ligou).[/magenta]")
         extras.append(coletor_da_rodada(config, auto, saude))
+    enriquecedores = []
+    if auto.ativo and not central.somente_sugestao and central.modos_plataforma.get("linkedin") != "desligado":
+        from .linkedin.automatico import enriquecedor_da_rodada
+
+        enriquecedores.append(enriquecedor_da_rodada(auto, saude))
     try:
-        resultado = executar_rodada(
-            perfil, config, base, date.today(), pasta_emails=pasta, imap=imap,
-            usar_paginas=not sem_paginas, enriquecer_links=not sem_enriquecer, verificar_links=verificar_links,
-            motor_justificativa=central.motor_da_tarefa("justificativa-vagas"),
-            saude=saude, pode_ler=lambda url: plataforma_permite_leitura(central, url), coletores_extras=extras,
-            leitores_email=leitores,
-        )
+        with andamento.tarefa("Busca de vagas") as registro:
+            resultado = executar_rodada(
+                perfil, config, base, date.today(), pasta_emails=pasta, imap=imap,
+                usar_paginas=not sem_paginas, enriquecer_links=not sem_enriquecer, verificar_links=verificar_links,
+                motor_justificativa=central.motor_da_tarefa("justificativa-vagas"),
+                saude=saude, pode_ler=lambda url: plataforma_permite_leitura(central, url), coletores_extras=extras,
+                leitores_email=leitores, enriquecedores=enriquecedores,
+                paralelo=trabalhadores(central.desempenho.memoria_max_percentual),
+            )
+            registro["resultado"] = (f"{len(resultado.processamento.adicionadas)} vaga(s) nova(s), "
+                                     f"{len(resultado.resumo.itens)} recomendada(s)")
     except Exception as erro:  # noqa: BLE001 - a falha fica registrada na tarefa e é notificada
         salvar_saude(saude)
         falhar(tarefa, str(erro))
@@ -710,3 +726,44 @@ def vagas_gupy(termo: str = typer.Argument("estágio ti", help="O que pesquisar 
         console.print(f"• {escape(v.titulo)} — {escape(v.empresa or '?')} [dim]({escape(detalhes)})[/dim]")
     for aviso in avisos:
         console.print(f"[dim]{escape(aviso)}[/dim]")
+
+
+def andamento_cmd() -> None:
+    """Mostra o que o agente está fazendo agora (ou o resultado da última tarefa longa)."""
+    from .operacao import andamento
+
+    estado = andamento.ler()
+    if estado is None:
+        console.print("Nenhuma tarefa longa registrada ainda.")
+        return
+    cor = "magenta" if estado.get("rodando") else "green" if estado.get("situacao") == "concluida" else "yellow"
+    console.print(f"[{cor}]{escape(andamento.descrever(estado))}[/{cor}]")
+    for linha in andamento.ultimas_linhas(15):
+        console.print(f"[dim]{escape(linha)}[/dim]")
+
+
+@vagas_app.command("reavaliar")
+def vagas_reavaliar(
+    ler_descricoes: int = typer.Option(0, "--ler-descricoes", help="Antes, lê a descrição de até N vagas do LinkedIn "
+                                       "sem descrição (navegador do agente; precisa da automação ligada)."),
+) -> None:
+    """Dá nota de novo às vagas guardadas com o perfil atual e refaz o resumo do dia (não busca nada)."""
+    from .configuracao import carregar_configuracao
+    from .operacao.saude import carregar_saude, salvar_saude
+    from .radar.rodada import REAVALIAVEIS, reavaliar_base
+
+    perfil, config, base = _perfil(), carregar_config(), carregar_base()
+    central = carregar_configuracao()
+    if ler_descricoes and central.linkedin_automatico.ativo:
+        from .linkedin.automatico import enriquecedor_da_rodada
+
+        saude = carregar_saude()
+        alvo = [v for v in base.itens if v.status in (*REAVALIAVEIS, "eliminada") and (not v.descricao or not v.local)]
+        lidas = enriquecedor_da_rodada(central.linkedin_automatico, saude, limite=ler_descricoes)(alvo)
+        salvar_saude(saude)
+        console.print(f"LinkedIn: {lidas} descrição(ões) lida(s).")
+    liberadas, resumo, arquivo = reavaliar_base(base, perfil, config, date.today())
+    salvar_base(base)
+    console.print(f"[green]{liberadas} vaga(s) voltaram a valer[/green] · {len(resumo.itens)} recomendada(s) no resumo.")
+    _tabela_resumo(resumo.itens)
+    console.print(f"Resumo salvo em {arquivo}")

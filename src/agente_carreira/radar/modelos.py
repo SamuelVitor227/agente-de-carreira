@@ -20,7 +20,14 @@ MODELOS = ("presencial", "hibrido", "remoto")
 CONTRATOS = ("estagio", "clt", "pj")
 
 # Perfil-alvo inicial da especificação: Belo Horizonte e região metropolitana.
-REGIAO_BH = [
+REGIAO_BH = [  # Região Metropolitana de Belo Horizonte (34 municípios), começando pelos maiores
+    "Belo Horizonte", "Contagem", "Betim", "Ribeirão das Neves", "Santa Luzia", "Ibirité", "Sabará", "Nova Lima",
+    "Vespasiano", "Lagoa Santa", "Pedro Leopoldo", "Esmeraldas", "Sarzedo", "Igarapé", "Brumadinho", "Mateus Leme",
+    "Juatuba", "São José da Lapa", "Matozinhos", "Caeté", "Confins", "Raposos", "Rio Acima", "Mário Campos",
+    "São Joaquim de Bicas", "Jaboticatubas", "Capim Branco", "Florestal", "Itaguara", "Itatiaiuçu", "Baldim",
+    "Nova União", "Rio Manso", "Taquaraçu de Minas",
+]
+REGIAO_BH_ANTIGA = [
     "Belo Horizonte", "Contagem", "Betim", "Nova Lima", "Sabará", "Santa Luzia", "Ribeirão das Neves",
     "Ibirité", "Vespasiano", "Lagoa Santa", "Sarzedo", "Brumadinho", "Pedro Leopoldo", "Confins",
     "Raposos", "Caeté",

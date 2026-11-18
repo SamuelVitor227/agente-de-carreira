@@ -134,10 +134,20 @@ def sinais_estagio(vaga: VagaEncontrada) -> list[Sinal]:
 
 # ---------------------------------------------------------------- RF-VG-07
 
+_REGIAO_BH_TEXTO = ("regiao metropolitana de belo horizonte", "grande belo horizonte", "grande bh", "rmbh")
+
+
 def na_regiao(local: str, localidades: list[str]) -> bool:
-    cidade = slug(local.split(",")[0].split(" - ")[0].split("(")[0])
+    texto = norm(local)
+    if any(r in texto for r in _REGIAO_BH_TEXTO) and any(slug(l) == "belohorizonte" for l in localidades):
+        return True
+    cidade = local.split(",")[0].split(" - ")[0].split("(")[0]
+    cidade = re.sub(r"\s+e\s+regi[aã]o\b.*$", "", cidade, flags=re.I)  # "Belo Horizonte e Região"
+    cidade = slug(cidade)
     if cidade in CIDADES_GENERICAS:
         return True
+    if cidade == "bh":
+        cidade = "belohorizonte"
     return any(slug(l) == cidade for l in localidades)
 
 
@@ -165,8 +175,11 @@ def _motivos_da_busca(vaga: VagaEncontrada, busca: BuscaSalva, perfil: PerfilMes
         motivos.append(f"anúncio em {vaga.idioma}, fora dos idiomas da busca")
     if vaga.anos_experiencia and vaga.anos_experiencia > busca.limite_anos_experiencia:
         motivos.append(f"exige {vaga.anos_experiencia} anos de experiência (limite: {busca.limite_anos_experiencia})")
-    if vaga.modelo in ("presencial", "hibrido") and vaga.local and not na_regiao(vaga.local, busca.localidades):
-        motivos.append(f"{vaga.modelo} em {vaga.local}, fora da região")
+    # Sem modelo informado, a vaga conta como presencial (o caso mais comum).
+    if vaga.modelo != "remoto" and vaga.local and not na_regiao(vaga.local, busca.localidades):
+        motivos.append(f"{vaga.modelo or 'presencial'} em {vaga.local}, fora da região")
+    if vaga.modelo in ("presencial", "hibrido") and not vaga.local:
+        motivos.append(f"{vaga.modelo} sem local informado (confira na vaga)")
     if vaga.modelo == "remoto" and not busca.remoto_brasil:
         motivos.append("remoto fora da busca")
     for idioma, exigido in vaga.idiomas_exigidos.items():

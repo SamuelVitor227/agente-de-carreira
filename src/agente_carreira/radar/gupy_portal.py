@@ -108,7 +108,10 @@ def buscar(abrir_pagina, termos: list[str], *, dormir: Dormir = time.sleep, alea
     """Abre a busca do portal para cada termo e lê os cartões. abrir_pagina(url) devolve a página carregada."""
     vagas: dict[str, VagaBruta] = {}
     avisos: list[str] = []
+    from ..operacao import andamento
+
     for i, termo in enumerate(termos):
+        andamento.etapa(f"Gupy: pesquisando '{termo}'", i + 1, len(termos))
         if i:
             dormir((aleatorio or random).uniform(3, 7))
         pagina = abrir_pagina(URL_BUSCA + quote(termo))
@@ -146,6 +149,7 @@ def coletor_da_rodada(config, termos: list[str], saude, *, abrir_navegador=None,
         saude.sucesso(ADAPTADOR)
         return vagas, [a for a in avisos if len(avisos) < len(termos)], []
 
+    coletar.paralelo = True  # navegador próprio, sem a sua conta: roda junto com as outras fontes
     return coletar
 
 

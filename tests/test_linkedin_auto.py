@@ -556,3 +556,162 @@ def test_coletor_da_gupy_sem_conta_e_com_robots(monkeypatch):
     assert [v.link for v in vagas] == ["https://empresa.gupy.io/jobs/1234567"] and falhas == []
     bloqueado = gp.coletor_da_rodada(ConfigVagas(), ["x"], saude, abrir_navegador=Navegador, permite=lambda url: False)
     assert "robots" in bloqueado(BaseVagas())[1][0]
+
+
+# ---------------------------------------------------------------- e-mails que não são alertas, dicas do LinkedIn, paralelo
+
+def _email(remetente, assunto, html):
+    from email.message import EmailMessage
+
+    m = EmailMessage()
+    m["From"], m["Subject"] = remetente, assunto
+    m.set_content(html, subtype="html")
+    return m
+
+
+def test_emails_comuns_nao_param_a_fonte_e_rastreamento_vira_aviso():
+    from agente_carreira.radar.coleta import parece_alerta, so_links_de_rastreamento
+
+    assert not parece_alerta(_email("alertas@indeed.com", "Atualizamos os nossos Termos de Serviço", "<p>oi</p>"))
+    assert not parece_alerta(_email("no-reply@gupy.io", "samuel, vamos confirmar seu e-mail de cadastro?", "<p>x</p>"))
+    assert parece_alerta(_email("x@vagas.com.br", "Nova vaga compatível", "<p>x</p>"))
+    assert parece_alerta(_email("jobalerts-noreply@linkedin.com", "LUZA Group Engenheiro", "<p>x</p>"))
+    rastreio = _email("x@vagas.com.br", "Nova vaga compatível",
+                      '<a href="https://tracking.recomendacao.vagas.com.br/tracking/1/click/abc">Ver oportunidade</a>')
+    assert so_links_de_rastreamento(rastreio)
+    assert not so_links_de_rastreamento(_email("x@gupy.io", "Vagas", '<a href="https://omega.gupy.io/jobs/123">Dev</a>'))
+
+
+def test_alerta_novo_do_linkedin_separa_empresa_e_local_e_ignora_dicas():
+    from agente_carreira.radar.coleta import vagas_de_email
+
+    html = ('<table><tr><td><a href="https://www.linkedin.com/comm/jobs/view/4489776621/?trk=x">Estagiário em TI</a></td></tr>'
+            '<tr><td>Orguel · Belo Horizonte, MG (Híbrido)</td></tr><tr><td>47 ex-alunos da instituição de ensino</td></tr>'
+            '<tr><td><a href="https://www.linkedin.com/comm/jobs/view/4489776622/">Estagiário(a) - Suporte Técnico em TI</a></td></tr>'
+            '<tr><td>Tractebel · Belo Horizonte, MG (Presencial)</td></tr><tr><td>Recrutando agora</td></tr></table>')
+    vagas = vagas_de_email(_email("jobalerts-noreply@linkedin.com", "Vagas para você", html))
+    assert [(v.titulo, v.empresa, v.local) for v in vagas] == [
+        ("Estagiário em TI", "Orguel", "Belo Horizonte, MG (Híbrido)"),
+        ("Estagiário(a) - Suporte Técnico em TI", "Tractebel", "Belo Horizonte, MG (Presencial)")]
+
+
+def test_trabalhadores_respeitam_o_limite_de_memoria():
+    from agente_carreira.operacao.recursos import trabalhadores
+
+    assert trabalhadores(20, total_mb=65_000) == 8            # teto por educação com os sites
+    assert trabalhadores(20, total_mb=4_000) == 3             # 800 MB / 256 MB
+    assert trabalhadores(20, total_mb=1_000) == 1
+
+
+def test_descricoes_em_paralelo_por_site_e_robots_uma_vez_por_site():
+    from agente_carreira.radar.modelos import VagaEncontrada
+    from agente_carreira.radar.rodada import enriquecer
+
+    pedidos = []
+    html = '<script type="application/ld+json">{"@type":"JobPosting","title":"Dev","description":"<p>C# e SQL</p>"}</script>'
+
+    def baixar(url):
+        pedidos.append(url)
+        return (200, "User-agent: *\nAllow: /") if url.endswith("robots.txt") else (200, html)
+    vagas = [VagaEncontrada(titulo=f"Dev {i}", link=f"https://emp{i % 3}.gupy.io/jobs/{i}") for i in range(6)]
+    lidas = enriquecer(vagas, ConfigVagas(), baixar, _sem_pausa, paralelo=4)
+    assert lidas == 6 and all("C# e SQL" in v.descricao for v in vagas)
+    assert sum(1 for u in pedidos if u.endswith("robots.txt")) == 3   # um por site
+
+
+def test_anexa_curriculo_no_campo_de_arquivo_e_dominio_raiz(navegador, tmp_path):
+    from agente_carreira.preenchimento_auto import campo_curriculo, dominio_raiz, preencher_vazios
+
+    cv = tmp_path / "cv.pdf"
+    cv.write_bytes(b"%PDF-1.4")
+    pagina = navegador.new_page()
+    pagina.set_content('<input type="file" id="foto" accept="image/*"><input type="file" id="cv" accept=".pdf,.doc">')
+    feitos = preencher_vazios(pagina, [campo_curriculo(cv)], set())
+    assert feitos == ["Currículo (arquivo)"]
+    assert pagina.evaluate("document.getElementById('cv').files.length") == 1
+    assert pagina.evaluate("document.getElementById('foto').files.length") == 0      # foto não recebe currículo
+    pagina.close()
+    assert dominio_raiz("https://omega.gupy.io/jobs/1") == "gupy.io"
+    assert dominio_raiz("https://www.vagas.com.br/vagas/v1") == "vagas.com.br"
+    assert dominio_raiz("https://br.linkedin.com/jobs/view/1") == "linkedin.com"
+
+
+# ---------------------------------------------------------------- região (BH e RMBH), andamento e currículo
+
+def test_regiao_so_bh_e_regiao_metropolitana():
+    from agente_carreira.radar.filtros import na_regiao
+    from agente_carreira.radar.modelos import REGIAO_BH
+
+    assert len(REGIAO_BH) == 34
+    for local in ("Belo Horizonte e Região (Presencial)", "Região Metropolitana de Belo Horizonte", "Grande BH",
+                  "Ribeirão das Neves, MG", "Esmeraldas - MG", "Nova Lima, Minas Gerais, Brasil", "BH"):
+        assert na_regiao(local, REGIAO_BH), local
+    for local in ("São Paulo e Região", "Uberlândia, MG", "Vitória, ES"):
+        assert not na_regiao(local, REGIAO_BH), local
+
+
+def test_sem_modelo_fora_da_regiao_e_presencial_sem_local_saem():
+    from agente_carreira.models import Formacao
+    from agente_carreira.radar.filtros import avaliar_filtros
+
+    perfil = PerfilMestre(contato=Contato(nome="Ana", email="a@example.com"),
+                          formacao=[Formacao(curso="SI", instituicao="PUC", status="cursando", conclusao_prevista="2027/1")])
+    config = ConfigVagas(buscas=[BuscaSalva(nome="b", cargos=["desenvolvedor"])])
+    _, motivos = avaliar_filtros(VagaEncontrada(titulo="Desenvolvedor", local="São Paulo, SP"), config, perfil, date.today())
+    assert any("fora da região" in m for m in motivos)                   # sem modelo = presencial
+    _, motivos = avaliar_filtros(VagaEncontrada(titulo="Desenvolvedor", modelo="presencial"), config, perfil, date.today())
+    assert any("sem local" in m for m in motivos)
+    _, motivos = avaliar_filtros(VagaEncontrada(titulo="Desenvolvedor", modelo="remoto", local="Vitória, ES"), config,
+                                 perfil, date.today())
+    assert motivos == []                                                  # remoto vale de qualquer lugar
+
+
+def test_cidade_com_nova_nao_e_selo_e_local_do_topo_do_linkedin():
+    from agente_carreira.radar.coleta import separar_empresa_local
+
+    assert separar_empresa_local("Brandt", "Nova Lima, Minas Gerais, Brasil") == ("Brandt", "Nova Lima, Minas Gerais, Brasil")
+    assert separar_empresa_local("Brandt · Nova Lima, MG (Presencial)", "22 ex-alunos da instituição de ensino") == (
+        "Brandt", "Nova Lima, MG (Presencial)")
+    topo = ("Brandt\n\nEstágio\n\nNova Lima, Minas Gerais, Brasil  · há 4 dias · 94 pessoas clicaram\n\nPresencial\nEstágio")
+    assert auto.local_e_modelo_do_topo(topo) == ("Nova Lima, Minas Gerais, Brasil", "presencial")
+
+
+def test_vaga_ja_recomendada_e_eliminada_quando_as_regras_mudam():
+    from agente_carreira.radar.rodada import reavaliar_base
+
+    perfil = PerfilMestre(contato=Contato(nome="Ana", email="a@example.com"))
+    config = ConfigVagas(buscas=[BuscaSalva(nome="b", cargos=["desenvolvedor"])])
+    base = BaseVagas(itens=[VagaEncontrada(id="x", titulo="Desenvolvedor", status="no_resumo", local="Curitiba, PR")])
+    reavaliar_base(base, perfil, config, date.today())
+    assert base.itens[0].status == "eliminada"
+
+
+def test_andamento_registra_etapas_e_detecta_fim():
+    from agente_carreira.operacao import andamento
+
+    with andamento.tarefa("Busca de vagas") as registro:
+        andamento.etapa("Lendo as descrições", 3, 10)
+        estado = andamento.ler()
+        assert estado["rodando"] and "(3 de 10)" in andamento.descrever(estado)
+        assert andamento.em_andamento("Busca de vagas") is not None
+        registro["resultado"] = "5 vaga(s) nova(s)"
+    estado = andamento.ler()
+    assert not estado["rodando"] and "5 vaga(s) nova(s)" in andamento.descrever(estado)
+    assert any("começou" in l for l in andamento.ultimas_linhas())          # log só guarda etapas marcantes
+    andamento.etapa("sem tarefa: não faz nada")                           # fora de uma tarefa, ignora
+
+
+def test_curriculo_html_ats_e_competencias_agrupadas():
+    from agente_carreira.analise.cv_html import agrupar_competencias, html_curriculo
+    from agente_carreira.analise.variantes import ItemCV, SecaoCV, VarianteCV
+
+    grupos = dict(agrupar_competencias("C#, .NET, HTML5, CSS3, MySQL, Git, Scrum, Resolução de problemas"))
+    assert grupos["linguagens"] == ["C#"] and grupos["front"] == ["HTML5", "CSS3"]
+    assert "Resolução de problemas" in grupos["metodos"]
+    v = VarianteCV(foco="x", idioma="pt", nivel="estagio", nome="Ana <Souza>", cabecalho=["a@b.com | https://github.com/ana"],
+                   secoes=[SecaoCV(titulo="Competências", paragrafo="C#, Git"),
+                           SecaoCV(titulo="Idiomas", itens=[ItemCV(titulo="Inglês", subtitulo="intermediário")])])
+    pagina = html_curriculo(v)
+    assert "&lt;Souza&gt;" in pagina and "github.com/ana" in pagina and "https://" not in pagina
+    assert "<table" not in pagina and "<img" not in pagina                # ATS: sem tabelas nem imagens
+    assert "<b>Inglês</b> (intermediário)" in pagina

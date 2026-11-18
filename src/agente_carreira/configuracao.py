@@ -130,11 +130,18 @@ class SitesVagas(BaseModel):
     gupy_termos_por_rodada: int = 5
 
 
+class Desempenho(BaseModel):
+    """Quanto do computador o agente pode usar (tarefas em paralelo)."""
+
+    memoria_max_percentual: int = 20         # % da RAM para tarefas paralelas (leitura de páginas, navegadores)
+
+
 class Configuracao(BaseModel):
     somente_sugestao: bool = False          # RF-OP-02
     linkedin_automatico: LinkedInAutomatico = Field(default_factory=LinkedInAutomatico)
     email_navegador: EmailNavegador = Field(default_factory=EmailNavegador)
     sites: SitesVagas = Field(default_factory=SitesVagas)
+    desempenho: Desempenho = Field(default_factory=Desempenho)
     motores: dict[str, str] = Field(default_factory=dict)  # RF-IA-01
     limites: Limites = Field(default_factory=Limites)
     horarios: Horarios = Field(default_factory=Horarios)
