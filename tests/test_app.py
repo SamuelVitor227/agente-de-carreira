@@ -23,14 +23,15 @@ def dados_em_tmp(tmp_path, monkeypatch):
 # ---------------------------------------------------------------- coerência janela × CLI
 
 def _chamadas_executar() -> list[list[str]]:
-    """Argumentos literais de cada self.executar(...) em janela.py."""
-    arvore = ast.parse(Path(atalho.__file__).with_name("janela.py").read_text(encoding="utf-8"))
+    """Argumentos literais de cada self.executar(...) no app (janela.py e as telas em app/telas/)."""
+    pasta = Path(atalho.__file__).parent
     chamadas = []
-    for no in ast.walk(arvore):
-        if isinstance(no, ast.Call) and getattr(no.func, "attr", None) == "executar" and len(no.args) >= 2:
-            lista = no.args[1]
-            if isinstance(lista, ast.List):
-                chamadas.append([e.value if isinstance(e, ast.Constant) else None for e in lista.elts])
+    for arquivo in [pasta / "janela.py", *sorted((pasta / "telas").glob("*.py"))]:
+        for no in ast.walk(ast.parse(arquivo.read_text(encoding="utf-8"))):
+            if isinstance(no, ast.Call) and getattr(no.func, "attr", None) == "executar" and len(no.args) >= 2:
+                lista = no.args[1]
+                if isinstance(lista, ast.List):
+                    chamadas.append([e.value if isinstance(e, ast.Constant) else None for e in lista.elts])
     return chamadas
 
 
