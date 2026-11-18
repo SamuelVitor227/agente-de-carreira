@@ -179,7 +179,7 @@ def _esperar_fechar(sessao) -> None:
 
     while True:
         try:
-            if not [p for p in sessao.pagina.context.pages if not p.is_closed()]:
+            if not sessao.aberta():
                 return
         except Exception:  # noqa: BLE001 - navegador já fechado
             return
@@ -203,7 +203,7 @@ def _candidatura_no_site(link: str, cv: Path | None, perfil) -> None:
         def avisar(endereco: str, rotulos: list[str]) -> None:
             console.print(f"[green]Preenchido:[/green] {escape(', '.join(rotulos))}")
 
-        acompanhar(sessao.pagina.context, [dominio_raiz(link)], campos, ao_preencher=avisar)
+        acompanhar(sessao.visao(), [dominio_raiz(link)], campos, ao_preencher=avisar)
 
 
 def _preencher_linkedin(link: str, central, cv: Path | None, perfil, contrato: str | None,

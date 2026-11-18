@@ -254,9 +254,48 @@ class JanelaExecucao(tk.Toplevel):
         self.after(200, self._animar)
 
     def _iniciar_proximo(self) -> None:
-        Execucao(self._comandos.pop(0), ao_escrever=lambda t: self._fila.put(("texto", t)),
-                 ao_perguntar=lambda p: self._fila.put(("pergunta", p)),
-                 ao_terminar=lambda c: self._fila.put(("fim", c))).iniciar()
+        """Cada comando roda num processo próprio: várias janelas do app trabalham ao mesmo tempo."""
+        import subprocess
+        import threading
+
+        args = self._comandos.pop(0)
+        venv = scripts_do_venv() / ("python.exe" if sys.platform == "win32" else "python")
+        python = str(venv) if venv.is_file() else sys.executable
+        ambiente = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUNBUFFERED="1")
+        self._processo = subprocess.Popen(
+            [python, "-m", "agente_carreira.app.filho", *args], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT, cwd=raiz_do_projeto(), env=ambiente, text=True, encoding="utf-8",
+            errors="replace", bufsize=1, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        threading.Thread(target=self._ler_processo, args=(self._processo,), daemon=True).start()
+
+    def _ler_processo(self, processo) -> None:
+        """Lê a saída do processo; linhas de controle viram perguntas, cuja resposta volta pela entrada dele."""
+        import json
+
+        from .filho import MARCA
+
+        for linha in iter(processo.stdout.readline, ""):
+            if MARCA not in linha:
+                self._fila.put(("texto", linha))
+                continue
+            antes, _, controle = linha.partition(MARCA)
+            if antes:
+                self._fila.put(("texto", antes))
+            if not controle.startswith("PERGUNTA "):
+                continue
+            dados = json.loads(controle[len("PERGUNTA "):])
+            pergunta = Pergunta(texto=dados["texto"], tipo=dados["tipo"], padrao=dados["padrao"],
+                                opcoes=[tuple(o) for o in dados["opcoes"]])
+            self._fila.put(("pergunta", pergunta))
+            pergunta.pronta.wait()
+            resposta = {"cancelar": True} if pergunta.cancelada else {"valor": pergunta.resposta}
+            try:
+                processo.stdin.write(json.dumps(resposta, ensure_ascii=False) + "\n")
+                processo.stdin.flush()
+            except OSError:
+                break
+        codigo = processo.wait()
+        self._fila.put(("fim", 130 if getattr(self, "_parado", False) else codigo))
 
     # -- saída
     def _escrever(self, texto: str) -> None:
@@ -380,7 +419,13 @@ class JanelaExecucao(tk.Toplevel):
                 self._area_pergunta.pack_forget()
                 pergunta.cancelar()
             return
-        messagebox.showinfo(NOME_APP, "Ainda trabalhando. A janela pode ser fechada quando terminar.", parent=self)
+        if messagebox.askyesno(NOME_APP, "Ainda trabalhando. Parar esta tarefa agora? O que já foi feito fica salvo.",
+                               parent=self):
+            self._parado = True
+            self._comandos.clear()
+            processo = getattr(self, "_processo", None)
+            if processo is not None and processo.poll() is None:
+                processo.terminate()
 
 
 # ---------------------------------------------------------------- app

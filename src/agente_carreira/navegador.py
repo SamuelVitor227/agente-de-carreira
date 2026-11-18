@@ -224,11 +224,194 @@ def erro_curto(erro: BaseException, limite: int = 220) -> str:
     return linha if len(linha) <= limite else linha[:limite].rstrip() + "…"
 
 
-class SessaoNavegador:
-    """Navegador visível com perfil próprio em data/navegador: o login que você fizer fica salvo.
+ARQUIVO_SERVIDOR = "navegador.servidor"   # {"porta": ..., "pid": ...} do navegador compartilhado
+ARQUIVO_SESSOES = "navegador.sessoes"     # tarefas usando o navegador agora: {"pid-n": "uso"}
 
-    Um uso por vez: se outra tarefa estiver com o navegador aberto, levanta NavegadorOcupado.
+
+@dataclass
+class _Visao:
+    """Só as abas desta tarefa (as outras tarefas têm as delas no mesmo navegador)."""
+
+    sessao: "SessaoNavegador"
+
+    @property
+    def pages(self) -> list:
+        return self.sessao.abas()
+
+
+def _trava_curta(tentativas: int = 60):
+    """Trava entre processos por pouco tempo (abrir o navegador, anotar sessões); espera a vez em vez de falhar."""
+    trava = _Trava(diretorio_dados() / "navegador.trava")
+    for _ in range(tentativas):
+        try:
+            trava.adquirir()
+            return trava
+        except NavegadorOcupado:
+            time.sleep(0.25)
+    raise NavegadorOcupado(uso_atual_do_navegador())
+
+
+def _ler_json(nome: str) -> dict:
+    import json
+
+    try:
+        return json.loads((diretorio_dados() / nome).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def _gravar_json(nome: str, dados: dict) -> None:
+    import json
+
+    (diretorio_dados() / nome).write_text(json.dumps(dados, ensure_ascii=False), encoding="utf-8")
+
+
+def _cdp_vivo(porta: int) -> bool:
+    from urllib.request import urlopen
+
+    try:
+        with urlopen(f"http://127.0.0.1:{porta}/json/version", timeout=1.5) as resposta:
+            return resposta.status == 200
+    except OSError:
+        return False
+
+
+def _porta_livre() -> int:
+    import socket
+
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def _iniciar_servidor(executavel: str, pasta: Path) -> int:
+    """Abre o Chromium do agente (perfil com seus logins) como processo próprio, aceitando várias tarefas por abas."""
+    import subprocess
+    import sys
+
+    porta = _porta_livre()
+    criacao = 0
+    if sys.platform == "win32":
+        criacao = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    processo = subprocess.Popen(
+        [executavel, f"--user-data-dir={pasta}", f"--remote-debugging-port={porta}", "--remote-debugging-address=127.0.0.1",
+         "--no-first-run", "--no-default-browser-check", "--disable-features=Translate", "about:blank"],
+        creationflags=criacao, close_fds=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    for _ in range(80):  # até ~20 s para o navegador subir
+        if _cdp_vivo(porta):
+            _gravar_json(ARQUIVO_SERVIDOR, {"porta": porta, "pid": processo.pid})
+            return porta
+        time.sleep(0.25)
+    processo.kill()
+    raise RuntimeError("o navegador do agente não abriu a tempo")
+
+
+class SessaoNavegador:
+    """Uma aba própria no navegador do agente (perfil em data/navegador: os logins que você fizer ficam salvos).
+
+    Várias tarefas ao mesmo tempo: o navegador do agente fica aberto como um só programa e cada tarefa abre a
+    sua aba (busca, candidatura, Outlook, LinkedIn...). Quando a última tarefa termina, ele fecha sozinho.
     """
+
+    def __init__(self, uso: str = "uma tarefa do agente") -> None:
+        self.uso = uso
+        self._playwright = None
+        self._contexto = None
+        self._navegador = None
+        self._trava: _Trava | None = None
+        self._chave: str | None = None
+        self._abas: list = []
+        self.pagina = None
+
+    # -- abas desta tarefa
+    def abas(self) -> list:
+        return [p for p in self._abas if not p.is_closed()]
+
+    def aberta(self) -> bool:
+        """True enquanto alguma aba desta tarefa estiver aberta (você fecha quando terminar)."""
+        try:
+            return bool(self.abas())
+        except Exception:  # noqa: BLE001 - navegador fechado
+            return False
+
+    def visao(self) -> _Visao:
+        return _Visao(self)
+
+    def nova_aba(self):
+        aba = self._contexto.new_page()
+        self._acompanhar(aba)
+        return aba
+
+    def _acompanhar(self, aba) -> None:
+        self._abas.append(aba)
+        aba.on("popup", self._acompanhar)  # janelas que o site abre a partir desta aba também são desta tarefa
+
+    def __enter__(self) -> "SessaoNavegador":
+        from playwright.sync_api import sync_playwright
+
+        pasta = diretorio_dados() / PASTA_PERFIL_NAVEGADOR
+        pasta.mkdir(parents=True, exist_ok=True)
+        self._playwright = sync_playwright().start()
+        try:
+            trava = _trava_curta()
+            try:
+                servidor = _ler_json(ARQUIVO_SERVIDOR)
+                porta = servidor.get("porta")
+                if not porta or not _cdp_vivo(int(porta)):
+                    porta = _iniciar_servidor(self._playwright.chromium.executable_path, pasta)
+                self._navegador = self._playwright.chromium.connect_over_cdp(f"http://127.0.0.1:{porta}")
+                sessoes = _ler_json(ARQUIVO_SESSOES)
+                self._chave = f"{os.getpid()}-{id(self)}"
+                sessoes[self._chave] = self.uso
+                _gravar_json(ARQUIVO_SESSOES, sessoes)
+            finally:
+                trava.soltar()
+            self._contexto = self._navegador.contexts[0] if self._navegador.contexts else self._navegador.new_context()
+            self._contexto.set_default_navigation_timeout(45_000)
+            self.pagina = self._contexto.new_page()
+            self._acompanhar(self.pagina)
+            for vazia in [p for p in self._contexto.pages if p.url == "about:blank" and p is not self.pagina]:
+                try:  # a aba em branco de quando o navegador abriu
+                    vazia.close()
+                except Exception:  # noqa: BLE001
+                    pass
+        except Exception:
+            self.__exit__(None, None, None)
+            raise
+        return self
+
+    def __exit__(self, *exc) -> None:
+        from .operacao.andamento import processo_vivo
+
+        try:
+            for aba in self.abas():
+                aba.close()
+        except Exception:  # noqa: BLE001 - você pode ter fechado o navegador inteiro
+            pass
+        try:
+            ultima = False
+            if self._chave:
+                trava = _trava_curta()
+                try:
+                    sessoes = {k: v for k, v in _ler_json(ARQUIVO_SESSOES).items()
+                               if k != self._chave and processo_vivo(int(k.split("-")[0]))}
+                    _gravar_json(ARQUIVO_SESSOES, sessoes)
+                    ultima = not sessoes
+                finally:
+                    trava.soltar()
+            if ultima and self._navegador is not None:  # última tarefa: fecha o navegador do agente
+                try:
+                    self._navegador.new_browser_cdp_session().send("Browser.close")
+                except Exception:  # noqa: BLE001 - já fechado
+                    pass
+        finally:
+            if self._playwright is not None:
+                self._playwright.stop()
+            self._contexto = self._playwright = self._navegador = self._chave = None
+
+
+class SessaoNavegadorExclusiva:
+    """Modo antigo (um navegador só desta tarefa); fica como reserva."""
 
     def __init__(self, uso: str = "uma tarefa do agente") -> None:
         self.uso = uso
@@ -237,7 +420,7 @@ class SessaoNavegador:
         self._trava: _Trava | None = None
         self.pagina = None
 
-    def __enter__(self) -> "SessaoNavegador":
+    def __enter__(self) -> "SessaoNavegadorExclusiva":
         import json
         from datetime import datetime
 

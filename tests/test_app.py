@@ -265,3 +265,31 @@ def test_varias_buscas_criadas_pela_cli():
     for comando in comandos:
         assert _rodar(comando, [])[0] == 0
     assert [b.nome for b in carregar_config().buscas] == ["backend-dotnet", "dados"]
+
+
+def test_processo_filho_conversa_com_a_janela(tmp_path):
+    """Cada janela roda num processo próprio: a pergunta chega como linha de controle e a resposta volta por stdin."""
+    import json
+    import os
+    import subprocess
+    import sys
+
+    from agente_carreira.app.filho import MARCA
+
+    cv = tmp_path / "cv.txt"
+    cv.write_text("Ana Teste\nana@example.com\n\nCompetências\nC#, SQL\n", encoding="utf-8")
+    ambiente = dict(os.environ, AGENTE_CARREIRA_DATA=str(tmp_path / "dados"), PYTHONIOENCODING="utf-8")
+    processo = subprocess.Popen([sys.executable, "-m", "agente_carreira.app.filho", "importar", str(cv)],
+                                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                                encoding="utf-8", errors="replace", bufsize=1, env=ambiente)
+    perguntas, texto = [], []
+    for linha in iter(processo.stdout.readline, ""):
+        if MARCA in linha:
+            perguntas.append(json.loads(linha.split(MARCA, 1)[1][len("PERGUNTA "):]))
+            processo.stdin.write(json.dumps({"valor": True}) + "\n")
+            processo.stdin.flush()
+        else:
+            texto.append(linha)
+    assert processo.wait(timeout=60) == 0
+    assert [p["tipo"] for p in perguntas] == ["sim_nao"] and "Perfil-mestre criado" in "".join(texto)
+    assert (tmp_path / "dados" / "perfil-mestre.json").is_file()

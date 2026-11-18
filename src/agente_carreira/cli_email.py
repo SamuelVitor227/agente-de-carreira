@@ -74,7 +74,7 @@ def email_entrar() -> None:
             for _ in range(200):
                 time.sleep(3)
                 try:
-                    abertas = [p for p in sessao.pagina.context.pages if not p.is_closed()]
+                    abertas = sessao.abas()
                     if not abertas:
                         break
                     if any(any(d in p.url.lower() for d in DOMINIOS_CAIXA) and p.locator(SELETOR_PESQUISA).count()

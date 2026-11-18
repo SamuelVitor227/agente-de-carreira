@@ -591,7 +591,7 @@ def plataformas_abrir(
             def avisar(endereco_pagina: str, rotulos: list[str]) -> None:
                 console.print(f"[green]Preenchido:[/green] {escape(', '.join(rotulos))} [dim]({escape(endereco_pagina[:70])})[/dim]")
 
-            total = acompanhar(sessao.pagina.context, [raiz], campos, ao_preencher=avisar)
+            total = acompanhar(sessao.visao(), [raiz], campos, ao_preencher=avisar)
     except NavegadorOcupado as erro:
         console.print(f"[yellow]{escape(str(erro))}[/yellow]")
         raise typer.Exit(1)

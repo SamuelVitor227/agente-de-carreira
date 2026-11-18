@@ -92,6 +92,8 @@ def esperar_login(pagina, minutos: int = 10, dormir: Dormir = time.sleep) -> boo
         pass
     for _ in range(minutos * 30):
         dormir(2)
+        if getattr(pagina, "is_closed", lambda: False)():
+            return False  # você fechou a aba de login
         try:
             abertas = [p for p in pagina.context.pages if not p.is_closed()]
         except Exception:  # noqa: BLE001 - navegador fechado pela pessoa
