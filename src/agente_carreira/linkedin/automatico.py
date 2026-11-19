@@ -21,7 +21,7 @@ import time
 import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlencode
 
@@ -240,6 +240,32 @@ _MODELOS_TOPO = {"presencial": "presencial", "híbrido": "hibrido", "hibrido": "
                  "on-site": "presencial", "hybrid": "hibrido", "remote": "remoto"}
 
 
+_ENCERRADA_TOPO = re.compile(
+    r"n[aã]o aceita mais candidaturas|no longer accepting applications|candidaturas encerradas"
+    r"|esta vaga n[aã]o est[aá] mais dispon[ií]vel|this job is no longer available", re.I)
+_IDADE_TOPO = re.compile(
+    r"(?:h[aá]|publicad[ao]\s+h[aá]|republicad[ao]\s+h[aá])\s+(\d+|um|uma)\s+(minuto|hora|dia|semana|m[eê]s|meses|ano)"
+    r"|(\d+|an?)\s+(minute|hour|day|week|month|year)s?\s+ago", re.I)
+_DIAS_POR_UNIDADE = {"minuto": 0, "hora": 0, "dia": 1, "semana": 7, "mes": 30, "mês": 30, "meses": 30, "ano": 365,
+                     "minute": 0, "hour": 0, "day": 1, "week": 7, "month": 30, "year": 365}
+
+
+def situacao_do_topo(texto: str, hoje: date | None = None) -> tuple[str | None, date | None]:
+    """Do topo da vaga no LinkedIn: (aviso de encerrada, data aproximada da publicação).
+
+    "Não aceita mais candidaturas" e "Belo Horizonte, MG · há 6 meses · Mais de 100 candidaturas"
+    → ("Não aceita mais candidaturas", hoje − 180 dias).
+    """
+    hoje = hoje or date.today()
+    encerrada = _ENCERRADA_TOPO.search(texto or "")
+    publicada = None
+    if (m := _IDADE_TOPO.search(texto or "")):
+        numero, unidade = (m.group(1), m.group(2)) if m.group(1) else (m.group(3), m.group(4))
+        quantidade = 1 if numero.lower() in ("um", "uma", "a", "an") else int(numero)
+        publicada = hoje - timedelta(days=quantidade * _DIAS_POR_UNIDADE[unidade.lower()])
+    return (encerrada.group(0)[:1].upper() + encerrada.group(0)[1:] if encerrada else None), publicada
+
+
 def local_e_modelo_do_topo(texto: str) -> tuple[str | None, str | None]:
     """Do topo da vaga no LinkedIn: ('Nova Lima, Minas Gerais, Brasil', 'presencial')."""
     m = _LOCAL_TOPO.search(texto or "")
@@ -265,14 +291,19 @@ def ler_detalhe(pagina, vaga: VagaBruta, cfg: LinkedInAutomatico, dormir: Dormir
             if alvo.count():
                 dados["descricao"] = alvo.first.inner_text().strip()
                 break
-    if not vaga.local or not vaga.modelo:
-        # Topo da vaga: "Nova Lima, Minas Gerais, Brasil · há 2 dias · 30 candidaturas" e uma linha "Presencial".
-        topo = pagina.evaluate("() => ((document.querySelector('main') || document.body).innerText || '').slice(0, 900)")
-        local_topo, modelo_topo = local_e_modelo_do_topo(topo)
-        if local_topo and not vaga.local:
-            dados["local"] = local_topo
-        if modelo_topo and not vaga.modelo:
-            dados["modelo"] = modelo_topo
+    # Topo da vaga: "Nova Lima, Minas Gerais, Brasil · há 2 dias · 30 candidaturas", uma linha "Presencial" e,
+    # se ela fechou, "Não aceita mais candidaturas".
+    topo = pagina.evaluate("() => ((document.querySelector('main') || document.body).innerText || '').slice(0, 2000)")
+    local_topo, modelo_topo = local_e_modelo_do_topo(topo)
+    if local_topo and not vaga.local:
+        dados["local"] = local_topo
+    if modelo_topo and not vaga.modelo:
+        dados["modelo"] = modelo_topo
+    encerrada, publicada = situacao_do_topo(topo)
+    if encerrada:
+        dados["encerrada"] = encerrada
+    if publicada and not dados.get("publicada_em"):
+        dados["publicada_em"] = publicada
     if not dados.get("empresa") and not vaga.empresa:
         # O título da aba é "Cargo | Empresa | LinkedIn".
         partes = [p.strip() for p in (pagina.title() or "").split("|")]
@@ -572,19 +603,36 @@ def responder_com_perfil(perfil, banco, contrato: str | None = None) -> Callable
 
 # ---------------------------------------------------------------- descrições das vagas dos alertas
 
+def aplicar_conferencia(vaga, lida: VagaBruta, agora: datetime | None = None) -> None:
+    """O que a página aberta agora diz da vaga: data real de publicação, prazo e se ela fechou."""
+    vaga.conferida_em = agora or datetime.now(timezone.utc)
+    # O alerta de e-mail chega depois da publicação: a data mais antiga é a verdadeira.
+    if lida.publicada_em and (vaga.publicada_em is None or lida.publicada_em < vaga.publicada_em):
+        vaga.publicada_em = lida.publicada_em
+    if lida.valida_ate and not vaga.valida_ate:
+        vaga.valida_ate = lida.valida_ate
+    if lida.encerrada:
+        vaga.motivo_expiracao = f"o LinkedIn diz: {lida.encerrada}"
+
+
 def enriquecedor_da_rodada(cfg: LinkedInAutomatico, saude, *, abrir_sessao=None, dormir: Dormir = time.sleep,
                            limite: int | None = None):
-    """Abre no navegador do agente as vagas do LinkedIn sem descrição (ex.: as dos alertas) e lê a descrição.
+    """Abre no navegador do agente as vagas do LinkedIn e lê a página: descrição, local, data e se ela ainda aceita
+    candidaturas ("Não aceita mais candidaturas" vira vaga expirada).
 
-    Só leitura, com pausas; no máximo `limite` vagas (padrão: detalhes_por_rodada). Devolve quantas ganharam descrição.
+    Vão as sem descrição ou sem local (ex.: as dos alertas) e as abertas que ninguém confere há dias. Só leitura, com
+    pausas; no máximo `limite` vagas (padrão: detalhes_por_rodada). Devolve quantas páginas foram lidas.
     """
-    def enriquecer(vagas) -> int:
+    def enriquecer(vagas, *, conferir_todas: bool = False) -> int:
         from ..radar.coleta import separar_empresa_local
+        from ..radar.rodada import precisa_conferir
 
         for v in vagas:  # "Empresa · Cidade" vira empresa e local antes de qualquer leitura
             v.empresa, v.local = separar_empresa_local(v.empresa, v.local)
-        alvo = [v for v in vagas if (not v.descricao or not v.local) and v.link and "linkedin.com/jobs/view/" in v.link]
-        alvo = sorted(alvo, key=lambda v: -v.nota)[:limite or cfg.detalhes_por_rodada]  # as de maior nota primeiro
+        alvo = [v for v in vagas if v.link and "linkedin.com/jobs/view/" in v.link
+                and (not v.descricao or not v.local or conferir_todas or precisa_conferir(v))]
+        # Primeiro as que ainda não têm descrição; depois as de maior nota.
+        alvo = sorted(alvo, key=lambda v: (bool(v.descricao), -v.nota))[:limite or cfg.detalhes_por_rodada]
         if not alvo or not saude.pode_usar(ADAPTADOR):
             return 0
         from ..navegador import NavegadorOcupado, SessaoNavegador
@@ -596,7 +644,7 @@ def enriquecedor_da_rodada(cfg: LinkedInAutomatico, saude, *, abrir_sessao=None,
         try:
             with (abrir_sessao or SessaoNavegador)(**({} if abrir_sessao else {"uso": USO_NAVEGADOR})) as sessao:
                 for i, vaga in enumerate(alvo, 1):
-                    andamento.etapa("LinkedIn: lendo a descrição das vagas dos alertas", i, len(alvo))
+                    andamento.etapa("LinkedIn: lendo e conferindo as vagas", i, len(alvo))
                     if i > 1:
                         pausa(cfg, dormir)
                     bruta = VagaBruta(titulo=vaga.titulo, empresa=vaga.empresa, local=vaga.local, link=vaga.link,
@@ -607,15 +655,15 @@ def enriquecedor_da_rodada(cfg: LinkedInAutomatico, saude, *, abrir_sessao=None,
                         raise
                     except Exception:  # noqa: BLE001 - uma vaga com problema não para as outras
                         continue
-                    if lida.descricao or (lida.local and not vaga.local):
-                        if lida.local and not vaga.local:
-                            vaga.local = lida.local
-                        if lida.modelo and not vaga.modelo:
-                            vaga.modelo = lida.modelo
-                        if lida.descricao and not vaga.descricao:
-                            mesclar(vaga, de_bruta(lida))
-                            reextrair(vaga)
-                        lidas += 1
+                    aplicar_conferencia(vaga, lida)
+                    lidas += 1
+                    if lida.local and not vaga.local:
+                        vaga.local = lida.local
+                    if lida.modelo and not vaga.modelo:
+                        vaga.modelo = lida.modelo
+                    if lida.descricao and not vaga.descricao:
+                        mesclar(vaga, de_bruta(lida))
+                        reextrair(vaga)
         except (NavegadorOcupado, LoginNecessario):
             return lidas
         if lidas:

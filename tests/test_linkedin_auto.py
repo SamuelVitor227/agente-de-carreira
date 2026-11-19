@@ -732,3 +732,99 @@ def test_navegador_ocupado_diz_o_que_esta_usando(tmp_path):
     with pytest.raises(NavegadorOcupado, match="aberto em: a candidatura no site da vaga"):
         segunda.adquirir()
     primeira.soltar()
+
+
+# ---------------------------------------------------------------- vaga que não aceita mais candidaturas
+
+TOPO_ENCERRADA = ("Tata Consultancy Services\nAnalista de Dados Junior (Databricks)\n"
+                  "Belo Horizonte, Minas Gerais, Brasil · há 6 meses · Mais de 100 candidaturas\n"
+                  "Promovida por quem está contratando · Ainda não há estatísticas de resposta disponíveis\n"
+                  "Presencial\nContrato\nNão aceita mais candidaturas\n")
+
+
+@pytest.mark.parametrize("topo, encerrada, dias", [
+    (TOPO_ENCERRADA, "Não aceita mais candidaturas", 180),
+    ("Nova Lima, Minas Gerais, Brasil · há 4 dias · 94 pessoas clicaram\nPresencial", None, 4),
+    ("Contagem, MG · Republicada há uma semana · 12 candidaturas", None, 7),
+    ("Belo Horizonte · 3 weeks ago · Over 100 applicants\nNo longer accepting applications", "No longer accepting applications", 21),
+    ("Belo Horizonte, MG · há 5 horas", None, 0),
+])
+def test_topo_da_vaga_diz_se_fechou_e_quando_foi_publicada(topo, encerrada, dias):
+    from datetime import timedelta
+
+    hoje = date(2026, 11, 19)
+    assert auto.situacao_do_topo(topo, hoje) == (encerrada, hoje - timedelta(days=dias))
+
+
+def test_vaga_que_nao_aceita_mais_candidaturas_sai_da_lista():
+    """O caso real: veio de um alerta de e-mail, foi recomendada, e no LinkedIn já estava fechada havia meses."""
+    from datetime import timedelta
+
+    from agente_carreira.radar.rodada import expirar, precisa_conferir
+
+    class Vazio:
+        def count(self):
+            return 0
+
+    class Pagina:
+        url = "https://www.linkedin.com/jobs/view/4416453564"
+
+        def goto(self, *_a, **_k):
+            pass
+
+        def evaluate(self, js):
+            return [] if "ld+json" in js else TOPO_ENCERRADA
+
+        def locator(self, _seletor):
+            return Vazio()
+
+        def title(self):
+            return "Analista de Dados Junior (Databricks) | Tata Consultancy Services | LinkedIn"
+
+    class Sessao:
+        pagina = Pagina()
+
+        def __init__(self, **_k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_a):
+            return False
+
+    vaga = VagaEncontrada(id="t", titulo="Analista de Dados Junior (Databricks)", empresa="Tata Consultancy Services",
+                          local="Belo Horizonte, Minas Gerais, Brasil", link=Pagina.url, status="no_resumo",
+                          descricao="Sobre a vaga: dados com Python e SQL.", publicada_em=date.today(),
+                          aderencia=Aderencia(nota=62))
+    assert precisa_conferir(vaga)  # aberta, com link e nunca conferida
+    enriquecer = auto.enriquecedor_da_rodada(LinkedInAutomatico(), RegistroSaude(), abrir_sessao=Sessao,
+                                             dormir=lambda _s: None)
+    assert enriquecer([vaga]) == 1
+    assert vaga.motivo_expiracao == "o LinkedIn diz: Não aceita mais candidaturas"
+    assert vaga.publicada_em <= date.today() - timedelta(days=170)  # a data do e-mail dava a vaga como nova
+    assert not precisa_conferir(vaga)  # acabou de ser conferida
+    base = BaseVagas(itens=[vaga])
+    assert [v.id for v in expirar(base, date.today(), ConfigVagas())] == ["t"] and vaga.status == "expirada"
+
+
+def test_vaga_conferida_ha_pouco_ou_fora_da_lista_nao_e_aberta_de_novo():
+    from datetime import timedelta
+
+    from agente_carreira.radar.rodada import precisa_conferir
+
+    agora = datetime(2026, 11, 19, 12, tzinfo=timezone.utc)
+    vaga = VagaEncontrada(titulo="Dev", link="https://www.linkedin.com/jobs/view/1", status="no_resumo",
+                          conferida_em=agora - timedelta(days=1))
+    assert not precisa_conferir(vaga, agora)
+    vaga.conferida_em = agora - timedelta(days=3)
+    assert precisa_conferir(vaga, agora)
+    vaga.status = "eliminada"
+    assert not precisa_conferir(vaga, agora)
+
+
+def test_texto_de_vaga_fechada_no_anuncio():
+    from agente_carreira.radar.filtros import PADRAO_ENCERRADA
+
+    for texto in ("Não aceita mais candidaturas", "This job has expired", "Esta vaga expirou", "Candidaturas encerradas"):
+        assert PADRAO_ENCERRADA.search(texto), texto

@@ -68,6 +68,7 @@ Revisão do produto pronto com os dados reais (116 vagas, a tarefa agendada e a 
 | RM-08 | **Ações na hora**, sem janela de texto: salvar, "Não tenho interesse" (que agora tira a vaga da lista) e "Lembrete feito". | Feito |
 | RM-09 | **Resumo diário mais curto:** as vagas de nota baixa vão para uma lista no fim. | Feito |
 | RM-10 | **Início coerente:** "Vagas boas" usa o limiar de candidatura, e o passo do e-mail reconhece a leitura do Outlook pelo navegador. | Feito |
+| RM-12 | **Vagas encerradas saem da lista** (19/11). O agente recomendava vagas que o LinkedIn já mostrava como "Não aceita mais candidaturas": ele não lia esse aviso e usava a data do alerta de e-mail no lugar da data real. Agora lê o aviso e a idade do anúncio ("há 6 meses"), confere de novo as vagas abertas a cada 2 dias e tem o botão "Ainda estão abertas?" / `agente vagas conferir`. Na primeira conferência, 12 das 33 recomendadas estavam fechadas. | Feito |
 | RM-11 | **Código dividido por área** (CLI em 5 módulos, uma classe por tela do app), com um teste que confere todas as importações. | Feito |
 
 Sobre o **RF-EV-19**: ele ficou mais urgente. A pasta do navegador do agente (`data/navegador`, com os logins do LinkedIn e do Outlook) também está dentro do OneDrive.

@@ -56,7 +56,8 @@ PADRAO_INJECAO = re.compile(
 PADRAO_ENCERRADA = re.compile(
     r"vaga\s+(foi\s+|est[aá]\s+)?(encerrada|fechada|preenchida|expirada)|n[aã]o\s+(est[aá]\s+mais|se\s+encontra)\s+dispon[ií]vel"
     r"|inscri[cç][oõ]es\s+encerradas|processo\s+(seletivo\s+)?encerrado|no\s+longer\s+(accepting|available)"
-    r"|this\s+job\s+(is\s+)?closed",
+    r"|this\s+job\s+(is\s+)?closed|n[aã]o\s+aceita\s+mais\s+candidaturas|candidaturas\s+encerradas"
+    r"|(esta\s+)?vaga\s+expirou|this\s+job\s+has\s+expired|job\s+(posting\s+)?(has\s+)?expired",
     re.I,
 )
 

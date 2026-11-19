@@ -65,6 +65,8 @@ class TelaVagas:
         Botao(acoes, "Adicionar vaga por link", self._adicionar_vaga).pack(side="right", padx=(8, 0))
         Botao(acoes, "Candidatar às melhores", self._candidatar_melhores, "primario").pack(side="right", padx=(8, 0))
         Botao(acoes, "Buscar vagas agora", lambda: self.acao("buscar_vagas")).pack(side="right")
+        Botao(acoes, "Ainda estão abertas?", lambda: self.executar("Conferir vagas", ["vagas", "conferir"]),
+              "link").pack(side="right", padx=(0, 8))
 
         base, candidaturas, config = carregar_base(), carregar_candidaturas(), carregar_config()
         tela = self._tela_vagas  # aba, filtros e ordem ficam enquanto o app está aberto

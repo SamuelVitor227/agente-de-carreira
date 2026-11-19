@@ -195,9 +195,10 @@ class VagaBruta(BaseModel):
     contrato: str | None = None
     salario_min: float | None = None
     salario_max: float | None = None
+    encerrada: str | None = None  # a página da vaga diz que ela fechou (ex.: "Não aceita mais candidaturas")
 
 
-StatusVaga = Literal["nova", "no_resumo", "salva", "descartada", "expirada", "eliminada"]
+StatusVaga =Literal["nova", "no_resumo", "salva", "descartada", "expirada", "eliminada"]
 
 
 class VagaEncontrada(BaseModel):
@@ -228,6 +229,7 @@ class VagaEncontrada(BaseModel):
     busca: str | None = None
     motivos_eliminacao: list[str] = Field(default_factory=list)
     motivo_expiracao: str | None = None
+    conferida_em: datetime | None = None  # última vez que a página da vaga foi aberta para ver se ainda está aberta
     sinais: list[Sinal] = Field(default_factory=list)
     aderencia: Aderencia | None = None
     feedback: Feedback | None = None

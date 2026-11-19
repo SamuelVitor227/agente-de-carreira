@@ -270,6 +270,8 @@ Ainda entram o ajuste aprendido com o seu "Não tenho interesse" e um desconto d
 
 Abas **Recomendadas** (nota 50 ou mais), **Outras**, **Salvas** e **Todas**, com contagem. Há campo **Procurar**, filtros de modelo e de nível, ordenação clicando na coluna e a coluna "Encontrada". Clique numa vaga e o painel de baixo mostra a nota explicada (o que você tem, o que falta, se o cargo combina), os avisos e a descrição. "Salvar para depois" e "Não tenho interesse" acontecem na hora: a vaga sai da lista e o agente aprende. Com Ctrl ou Shift você escolhe várias vagas e se candidata a todas em sequência.
 
+**Vagas encerradas.** Um alerta de e-mail pode trazer vaga que já fechou. Por isso, a cada busca o agente abre de novo as vagas abertas que ninguém confere há 2 dias. Se a página diz "Não aceita mais candidaturas" (ou se o anúncio é velho demais pela data real, e não pela data do e-mail), a vaga sai da lista. O botão "Ainda estão abertas?" na tela de Vagas (ou `agente vagas conferir`) faz isso na hora. No LinkedIn, a conferência precisa da automação ligada; na Gupy, ela é feita pelo link.
+
 ### Seus dados ficam seguros
 
 - **Várias tarefas ao mesmo tempo:** cada gravação relê o arquivo e mantém o que outra tarefa mudou. Se você clicar "Não tenho interesse" enquanto a busca roda, a busca não desfaz isso no fim.

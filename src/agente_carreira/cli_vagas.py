@@ -731,6 +731,55 @@ def andamento_cmd() -> None:
         console.print(f"[dim]{escape(linha)}[/dim]")
 
 
+@vagas_app.command("conferir")
+def vagas_conferir(
+    limite: int = typer.Option(20, "--limite", help="Quantas vagas do LinkedIn abrir no máximo."),
+) -> None:
+    """Abre as vagas recomendadas e salvas para ver se ainda aceitam candidaturas; as fechadas saem da lista.
+
+    A busca diária já confere algumas por dia; este comando confere agora. LinkedIn: pelo navegador do agente, com a
+    automação ligada. Gupy e outros sites permitidos: pelo link, respeitando o robots.txt.
+    """
+    from .configuracao import carregar_configuracao
+    from .operacao import andamento
+    from .operacao.saude import carregar_saude, salvar_saude
+    from .radar.coleta import baixar
+    from .radar.rodada import ABERTAS, expirar
+
+    from datetime import datetime, timedelta, timezone
+
+    central = carregar_configuracao()
+    base, config = carregar_base(), carregar_config()
+    recente = datetime.now(timezone.utc) - timedelta(hours=6)  # conferida há pouco: não abre de novo
+    abertas = [v for v in base.itens if v.status in ABERTAS and not v.risco
+               and (v.conferida_em is None or v.conferida_em < recente)]
+    with andamento.tarefa("Conferir vagas") as registro:
+        lidas = 0
+        if central.linkedin_automatico.ativo:
+            from .linkedin.automatico import enriquecedor_da_rodada
+
+            saude = carregar_saude()
+            lidas = enriquecedor_da_rodada(central.linkedin_automatico, saude, limite=limite)(abertas, conferir_todas=True)
+            salvar_saude(saude)
+        else:
+            console.print("[yellow]A automação do LinkedIn está desligada: as vagas do LinkedIn não foram abertas.[/yellow]")
+        andamento.etapa("Conferindo os links dos outros sites")
+        expiradas = expirar(base, date.today(), config, baixar_fn=baixar, verificar_links=True)
+        if lidas:  # descrições novas mudam a nota (e podem mostrar que a vaga não serve)
+            from .radar.rodada import reavaliar_base
+
+            reavaliar_base(base, _perfil(), config, date.today())
+        salvar_base(base, preferir="disco")
+        registro["resultado"] = f"{len(expiradas)} vaga(s) encerrada(s)"
+    console.print(f"{lidas} vaga(s) do LinkedIn abertas e conferidas.")
+    if not expiradas:
+        console.print("[green]Todas as vagas conferidas continuam abertas.[/green]")
+        return
+    console.print(f"[yellow]{len(expiradas)} vaga(s) não aceitam mais candidaturas e saíram da lista:[/yellow]")
+    for v in expiradas:
+        console.print(f"• {escape(v.titulo)} — {escape(v.empresa or '?')} [dim]({escape(v.motivo_expiracao or '')})[/dim]")
+
+
 @vagas_app.command("reavaliar")
 def vagas_reavaliar(
     ler_descricoes: int = typer.Option(0, "--ler-descricoes", help="Antes, lê a descrição de até N vagas do LinkedIn "

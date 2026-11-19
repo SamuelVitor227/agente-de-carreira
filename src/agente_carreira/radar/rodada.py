@@ -79,6 +79,10 @@ def de_bruta(bruta: VagaBruta) -> VagaEncontrada:
     # Dados estruturados da fonte (JSON-LD) valem mais que a leitura do texto.
     vaga.modelo = bruta.modelo or vaga.modelo
     vaga.contrato = bruta.contrato or vaga.contrato
+    if bruta.encerrada:
+        vaga.motivo_expiracao = f"a página da vaga diz: {bruta.encerrada}"
+    if bruta.fonte_tipo == "pagina":  # veio da própria página: acabou de ser vista aberta
+        vaga.conferida_em = datetime.now(timezone.utc)
     if bruta.salario_min is not None:
         vaga.salario_min, vaga.salario_max = bruta.salario_min, bruta.salario_max or bruta.salario_min
     return vaga
@@ -294,7 +298,8 @@ def expirar(
     for vaga in base.itens:
         if vaga.status not in ("nova", "no_resumo", "salva"):
             continue
-        if (verificar_links and baixar_fn and vaga.status != "nova" and vaga.link
+        conferida_agora = vaga.conferida_em and datetime.now(timezone.utc) - vaga.conferida_em < timedelta(hours=6)
+        if (verificar_links and baixar_fn and vaga.status != "nova" and vaga.link and not conferida_agora
                 and dominio_em(vaga.link, config.dominios_permitidos) and pode_ler(vaga.link)):
             try:
                 if robots_permite(vaga.link, baixar_fn):
@@ -303,6 +308,8 @@ def expirar(
                         vaga.motivo_expiracao = f"o anúncio saiu do ar (HTTP {status})"
                     elif html and PADRAO_ENCERRADA.search(analisar_html(html).texto):
                         vaga.motivo_expiracao = "a página diz que a vaga foi encerrada"
+                    if status in (200, 404, 410):
+                        vaga.conferida_em = datetime.now(timezone.utc)
             except ColetaErro:
                 pass
             finally:
@@ -337,8 +344,9 @@ def processar(
         reextrair(vaga)
     abertas = enriquecer(adicionadas, config, baixar_fn, dormir, pode_ler, paralelo) if enriquecer_links else 0
     for extra in enriquecedores:  # ex.: descrições das vagas do LinkedIn pelo navegador do agente (opção do usuário)
-        sem_descricao = adicionadas + [v for v in base.itens if v not in adicionadas and v.status in REAVALIAVEIS]
-        abertas += extra([v for v in sem_descricao if not v.descricao])
+        # As sem descrição e as abertas que ninguém confere há dias (a vaga pode ter fechado desde o alerta).
+        candidatas = adicionadas + [v for v in base.itens if v not in adicionadas and v.status in (*REAVALIAVEIS, "salva")]
+        abertas += extra([v for v in candidatas if not v.descricao or precisa_conferir(v)])
 
     # Também as vagas já guardadas: uma mudança no perfil (ex.: formação) vale na próxima busca.
     novas_ids = {id(v) for v in adicionadas}
@@ -361,6 +369,15 @@ def processar(
 
 
 REAVALIAVEIS = ("nova", "eliminada", "no_resumo")
+ABERTAS = ("nova", "no_resumo", "salva")
+DIAS_PARA_CONFERIR = 2
+
+
+def precisa_conferir(vaga: VagaEncontrada, agora: datetime | None = None) -> bool:
+    """Vaga ainda aberta para você, com link, que ninguém abriu nos últimos dias para ver se continua aberta."""
+    agora = agora or datetime.now(timezone.utc)
+    return (vaga.status in ABERTAS and bool(vaga.link) and not vaga.risco
+            and (vaga.conferida_em is None or agora - vaga.conferida_em > timedelta(days=DIAS_PARA_CONFERIR)))
 
 
 def reavaliar_base(base: BaseVagas, perfil: PerfilMestre, config: ConfigVagas, hoje: date):
