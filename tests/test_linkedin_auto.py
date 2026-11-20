@@ -875,3 +875,53 @@ def test_responde_perguntas_so_com_respostas_aprovadas(navegador):
     assert len(feitos) == 3
     assert responder_perguntas(pagina, responder, "x", ja) == []  # não repete
     pagina.close()
+
+
+# ---------------------------------------------------------------- RF-EV-03: página nova de resultados
+
+PAGINA_NOVA = """
+<main><p>21 resultados</p>
+<div role="button" componentkey="job-card-component-ref-4491521055"><p>Selecionada, Vaga de Estágio - TI - MG2026</p>
+  <p>Vaga de Estágio - TI - MG2026</p><p>Faculdade Católica Paulista</p><p>Belo Horizonte, MG</p>
+  <p>3 ex-alunos da instituição trabalham aqui</p></div>
+<div role="button" componentkey="job-card-component-ref-4492972409"><p>Robotics Intern</p><p>Pronto</p>
+  <p>Nova Lima, MG (Presencial)</p><p>Visto</p><p>·</p></div>
+<div role="button" componentkey="job-card-component-ref-4492000001"><p>Desenvolvedor .Net (vaga verificada)</p>
+  <p>Desenvolvedor .Net</p><p>Jobbol</p><p>Belo Horizonte, MG (Remoto)</p><p>Anunciada há 2 dias</p></div>
+<div role="button" componentkey="auto-component-x"><p>Última semana</p></div>
+</main>"""
+
+
+def test_cartoes_da_pagina_nova_do_linkedin(navegador):
+    pagina = navegador.new_page()
+    pagina.set_content(PAGINA_NOVA)
+    vagas = auto.cartoes_para_vagas(pagina.evaluate(auto.JS_CARTOES))
+    assert [(v.titulo, v.empresa, v.local, v.link) for v in vagas] == [
+        ("Vaga de Estágio - TI - MG2026", "Faculdade Católica Paulista", "Belo Horizonte, MG",
+         "https://www.linkedin.com/jobs/view/4491521055"),
+        ("Robotics Intern", "Pronto", "Nova Lima, MG (Presencial)", "https://www.linkedin.com/jobs/view/4492972409"),
+        ("Desenvolvedor .Net", "Jobbol", "Belo Horizonte, MG (Remoto)", "https://www.linkedin.com/jobs/view/4492000001"),
+    ]
+    pagina.close()
+
+
+# ---------------------------------------------------------------- RF-EV-16: réplicas das páginas reais (sem dados pessoais)
+
+CAIXA_OUTLOOK = """
+<input aria-label="Pesquisar">
+<div role="listbox">
+  <div role="option" data-convid="AAQkAD1" aria-label="Não lidos LinkedIn Vagas Estágio em TI em Belo Horizonte"></div>
+  <div role="option" data-convid="AAQkAD2" aria-label="Gupy Atualização da sua candidatura"></div>
+</div>"""
+
+
+def test_replica_da_caixa_do_outlook(navegador):
+    from agente_carreira.radar.outlook_web import JS_LINHAS, SELETOR_PESQUISA, nao_lido
+
+    pagina = navegador.new_page()
+    pagina.set_content(CAIXA_OUTLOOK)
+    assert pagina.locator(SELETOR_PESQUISA).count() == 1
+    linhas = pagina.evaluate(JS_LINHAS)
+    assert [l["convid"] for l in linhas] == ["AAQkAD1", "AAQkAD2"]
+    assert [nao_lido(l["rotulo"]) for l in linhas] == [True, False]  # o não lido continua não lido depois
+    pagina.close()

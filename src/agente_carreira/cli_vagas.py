@@ -259,6 +259,22 @@ def vagas_rodada(
         termos = termos_da_rodada(config.buscas, PESQUISAS_GERAIS_LINKEDIN, central.sites.gupy_termos_por_rodada)
         console.print(f"[magenta]Gupy: buscando no portal de vagas ({len(termos)} termo(s)).[/magenta]")
         extras.append(coletor_gupy(config, termos, saude))
+    if central.sites.glassdoor and not sem_paginas and not central.somente_sugestao:  # RF-EV-04
+        from .operacao.aviso_windows import avisar_na_tela
+        from .radar.glassdoor import coletor_da_rodada as coletor_glassdoor
+        from .radar.gupy_portal import termos_da_rodada as termos_glassdoor
+        from .radar.modelos import PESQUISAS_GERAIS_LINKEDIN as gerais
+
+        automatica = os.environ.get("AGENTE_ORIGEM") == "agendada"  # sem ninguém por perto: não espera verificação
+        minutos = 0 if automatica else central.sites.glassdoor_minutos_verificacao
+
+        def avisar_glassdoor(texto: str) -> None:
+            console.print(f"[yellow]{escape(texto)}[/yellow]")
+            avisar_na_tela("Glassdoor pede verificação", texto)
+
+        console.print("[magenta]Glassdoor: buscando no site, no navegador do agente.[/magenta]")
+        extras.append(coletor_glassdoor(termos_glassdoor(config.buscas, gerais, central.sites.glassdoor_termos_por_rodada),
+                                        "Belo Horizonte", saude, minutos_verificacao=minutos, avisar=avisar_glassdoor))
     auto = central.linkedin_automatico
     if auto.ativo and not sem_linkedin and not central.somente_sugestao             and central.modos_plataforma.get("linkedin") != "desligado":
         from .linkedin.automatico import coletor_da_rodada
@@ -743,7 +759,7 @@ def caminho_cv_da_vaga(vaga_id: str, idioma: str = "pt") -> Path:
 @vagas_app.command("curriculo")
 def vagas_curriculo(
     id_: str = typer.Argument(..., metavar="ID"),
-    idioma: str = typer.Option("pt", "--idioma", help="pt ou en."),
+    idioma: str | None = typer.Option(None, "--idioma", help="pt ou en; padrão: o idioma do anúncio (RF-EV-10)."),
 ) -> None:
     """Gera o currículo sob medida desta vaga (PDF) e mostra o que mudou em relação ao currículo-base (RF-EV-09)."""
     from .analise.exportar import exportar_pdf
@@ -754,6 +770,7 @@ def vagas_curriculo(
 
     vaga = _vaga(carregar_base(), id_)
     perfil = _perfil()
+    idioma = idioma or ("en" if vaga.idioma == "en" else "pt")
     foco = vaga.busca if vaga.busca in SINONIMOS_POR_FOCO else next(iter(SINONIMOS_POR_FOCO))
     nivel = vaga.nivel if vaga.nivel in ("estagio", "trainee", "junior") else "estagio"
     alvo = Vaga(titulo=vaga.titulo, empresa=vaga.empresa, foco=foco, url=vaga.link,

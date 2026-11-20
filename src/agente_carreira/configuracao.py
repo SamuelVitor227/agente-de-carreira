@@ -87,9 +87,10 @@ class LinkedInAutomatico(BaseModel):
     consultas_por_rodada: int = 4            # páginas de busca abertas por rodada (RN-05)
     vagas_por_consulta: int = 25
     detalhes_por_rodada: int = 12            # vagas novas abertas para ler a descrição
+    conferencias_por_rodada: int = 10        # vagas abertas reabertas para ver se ainda aceitam candidaturas
     intervalo_min_s: float = 4.0             # pausa aleatória entre páginas e ações
     intervalo_max_s: float = 11.0
-    ultimas_horas: int = 24                  # só vagas publicadas nesse período
+    ultimas_horas: int = 72                  # só vagas publicadas nesse período (3 dias: cobre o PC desligado)
     max_etapas_candidatura: int = 8
     local_padrao: str = "Belo Horizonte, Minas Gerais, Brasil"
     seletores_descricao: list[str] = Field(default_factory=lambda: [
@@ -129,6 +130,10 @@ class SitesVagas(BaseModel):
 
     gupy_portal: bool = True                 # portal.gupy.io: público, robots.txt respeitado
     gupy_termos_por_rodada: int = 5
+    # RF-EV-04: o site pede verificação de humano; só com você por perto (na busca das 7h, pula se pedir).
+    glassdoor: bool = False
+    glassdoor_minutos_verificacao: float = 5
+    glassdoor_termos_por_rodada: int = 2
 
 
 class Desempenho(BaseModel):

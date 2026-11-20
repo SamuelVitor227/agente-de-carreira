@@ -148,7 +148,9 @@ def coletor_da_rodada(termos: list[str], local: str | None, saude, *, minutos_ve
         except NavegadorOcupado as erro:
             return [], [f"Glassdoor não pesquisado nesta rodada: {erro}"], []
         except VerificacaoPendente as erro:
-            return [], [f"Glassdoor: {erro}; fica para a próxima rodada"], [f"Glassdoor: {erro}"]
+            # Na busca automática (sem esperar ninguém), pular o Glassdoor é o combinado: só um aviso, sem alarme.
+            falhas = [f"Glassdoor: {erro}"] if minutos_verificacao > 0 else []
+            return [], [f"Glassdoor: {erro}; fica para a próxima rodada"], falhas
         except Exception as erro:  # noqa: BLE001 - o Glassdoor não derruba a rodada
             if fechado_pela_pessoa(erro):
                 return [], ["Glassdoor: o navegador do agente foi fechado no meio da busca; fica para a próxima rodada"], []

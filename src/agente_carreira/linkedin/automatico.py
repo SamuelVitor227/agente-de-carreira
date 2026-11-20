@@ -168,16 +168,26 @@ def zip_longo(listas: list[list]) -> list[list]:
 
 
 # Lê os cartões de vaga da página de resultados: robusto a classes CSS, ancorado no link /jobs/view/ID.
+# Duas páginas de resultados: a antiga (/jobs/search/, cartões com link /jobs/view/ID) e a nova
+# (/jobs/search-results/, RF-EV-03): cartões sem link, com o número da vaga em componentkey="job-card-component-ref-ID".
 JS_CARTOES = r"""
 () => {
   const vistos = new Set(); const saida = [];
+  const linhasDe = e => ((e && e.innerText) || '').split('\n').map(s => s.trim()).filter(Boolean);
+  for (const cartao of document.querySelectorAll('[componentkey^="job-card-component-ref-"]')) {
+    const m = (cartao.getAttribute('componentkey') || '').match(/(\d{6,})$/);
+    if (!m || vistos.has(m[1])) continue;
+    vistos.add(m[1]);
+    const linhas = linhasDe(cartao).map(l => l.replace(/^(Selecionada|Selected),\s*/i, ''));
+    saida.push({id: m[1], titulo: linhas[0] || '', linhas});
+  }
   for (const a of document.querySelectorAll('a[href*="/jobs/view/"]')) {
     const m = (a.getAttribute('href') || '').match(/\/jobs\/view\/(?:[^/?#]*-)?(\d{6,})/) || (a.href || '').match(/\/jobs\/view\/(?:[^/?#]*-)?(\d{6,})/);
     if (!m || vistos.has(m[1])) continue;
     vistos.add(m[1]);
     const cartao = a.closest('li') || a.closest('[data-job-id]') || a.parentElement;
-    const linhas = ((cartao || a).innerText || '').split('\n').map(s => s.trim()).filter(Boolean);
-    saida.push({id: m[1], titulo: ((a.innerText || a.getAttribute('aria-label') || '').split('\n')[0] || '').trim(), linhas});
+    saida.push({id: m[1], titulo: ((a.innerText || a.getAttribute('aria-label') || '').split('\n')[0] || '').trim(),
+                linhas: linhasDe(cartao || a)});
   }
   return saida;
 }
@@ -188,13 +198,14 @@ _RUIDO = re.compile(
     r"ativamente recrutando|actively recruiting|seja um dos|be an early applicant|novo|new|"
     r"h[aá] \d|\d+ (minutos?|horas?|dias?|semanas?|meses|minutes?|hours?|days?|weeks?|months?)|"
     r".*candidat(o|os|ura|uras)$|.*applicants?$|.*conex(ão|ões|ao|oes) trabalh|.*alumni|.*verifica[cç][aã]o$|"
-    r"with verification|com verifica[cç][aã]o|\d+ benef)",
+    r"with verification|com verifica[cç][aã]o|\d+ benef|visto|·|.*ex-alunos|.*trabalham aqui|anunciada h[aá])",
     re.IGNORECASE,
 )
 
 
 def limpar_titulo(titulo: str) -> str:
-    return re.sub(r"\s*(with verification|com verifica[cç][aã]o)\s*$", "", titulo, flags=re.IGNORECASE).strip()
+    return re.sub(r"\s*(with verification|com verifica[cç][aã]o|\((vaga verificada|verified job)\))\s*$", "", titulo,
+                  flags=re.IGNORECASE).strip()
 
 
 def cartoes_para_vagas(cartoes: list[dict]) -> list[VagaBruta]:
@@ -216,9 +227,16 @@ def cartoes_para_vagas(cartoes: list[dict]) -> list[VagaBruta]:
 
 
 def _rolar_resultados(pagina, dormir: Dormir) -> None:
-    for _ in range(3):
+    """Rola a lista de resultados (que carrega mais cartões ao rolar): a da página antiga ou a da nova."""
+    for _ in range(4):
         pagina.evaluate("""() => {
-            const lista = document.querySelector('.jobs-search-results-list, .scaffold-layout__list > div, main');
+            const cartao = document.querySelector('[componentkey^="job-card-component-ref-"]');
+            let lista = null;
+            for (let e = cartao && cartao.parentElement; e; e = e.parentElement) {
+                const estilo = getComputedStyle(e);
+                if (e.scrollHeight > e.clientHeight + 40 && /(auto|scroll)/.test(estilo.overflowY)) { lista = e; break; }
+            }
+            lista = lista || document.querySelector('.jobs-search-results-list, .scaffold-layout__list > div, main');
             (lista || document.scrollingElement).scrollBy(0, 1600);
         }""")
         dormir(1.2)
@@ -631,8 +649,13 @@ def enriquecedor_da_rodada(cfg: LinkedInAutomatico, saude, *, abrir_sessao=None,
             v.empresa, v.local = separar_empresa_local(v.empresa, v.local)
         alvo = [v for v in vagas if v.link and "linkedin.com/jobs/view/" in v.link
                 and (not v.descricao or not v.local or conferir_todas or precisa_conferir(v))]
-        # Primeiro as que ainda não têm descrição; depois as de maior nota.
-        alvo = sorted(alvo, key=lambda v: (bool(v.descricao), -v.nota))[:limite or cfg.detalhes_por_rodada]
+        # Cada uma na sua cota (RF-EV-12): descrições novas primeiro, depois as conferências; as de maior nota antes.
+        sem_descricao = sorted((v for v in alvo if not v.descricao or not v.local), key=lambda v: -v.nota)
+        conferir = sorted((v for v in alvo if v.descricao and v.local), key=lambda v: -v.nota)
+        if limite:
+            alvo = (sem_descricao + conferir)[:limite]
+        else:
+            alvo = sem_descricao[:cfg.detalhes_por_rodada] + conferir[:cfg.conferencias_por_rodada]
         if not alvo or not saude.pode_usar(ADAPTADOR):
             return 0
         from ..navegador import NavegadorOcupado, SessaoNavegador

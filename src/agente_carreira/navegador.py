@@ -260,6 +260,24 @@ def _ler_json(nome: str) -> dict:
         return {}
 
 
+ARQUIVO_CONEXOES = "navegador.log"
+LINHAS_CONEXOES = 400
+
+
+def registrar_conexao(texto: str) -> None:
+    """RF-EV-18: cada tarefa que entra ou sai do navegador compartilhado fica registrada (data/navegador.log)."""
+    from datetime import datetime
+
+    caminho = diretorio_dados() / ARQUIVO_CONEXOES
+    try:
+        antigas = caminho.read_text(encoding="utf-8").splitlines(keepends=True)[-LINHAS_CONEXOES:] if caminho.is_file() else []
+        from .arquivos import gravar_texto
+
+        gravar_texto(caminho, "".join(antigas) + f"{datetime.now():%d/%m/%Y %H:%M:%S}  {texto}\n")
+    except OSError:
+        pass
+
+
 def _gravar_json(nome: str, dados: dict) -> None:
     import json
 
@@ -366,6 +384,8 @@ class SessaoNavegador:
                 self._chave = f"{os.getpid()}-{id(self)}"
                 sessoes[self._chave] = self.uso
                 _gravar_json(ARQUIVO_SESSOES, sessoes)
+                registrar_conexao(f"entrou: {self.uso} (processo {os.getpid()}, porta {porta}); "
+                                  f"{len(sessoes)} tarefa(s) no navegador")
             finally:
                 trava.soltar()
             self._contexto = self._navegador.contexts[0] if self._navegador.contexts else self._navegador.new_context()
@@ -399,6 +419,8 @@ class SessaoNavegador:
                                if k != self._chave and processo_vivo(int(k.split("-")[0]))}
                     _gravar_json(ARQUIVO_SESSOES, sessoes)
                     ultima = not sessoes
+                    registrar_conexao(f"saiu: {self.uso} (processo {os.getpid()})"
+                                      + ("; navegador fechado e porta de controle encerrada" if ultima else ""))
                 finally:
                     trava.soltar()
             if ultima and self._navegador is not None:  # última tarefa: fecha o navegador do agente

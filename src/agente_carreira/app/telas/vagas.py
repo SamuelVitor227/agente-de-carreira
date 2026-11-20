@@ -273,9 +273,10 @@ class TelaVagas:
         from ...cli_vagas import caminho_cv_da_vaga
 
         def abrir() -> None:
-            pdf = caminho_cv_da_vaga(vaga_id)
-            if pdf.is_file() and hasattr(os, "startfile"):
-                os.startfile(pdf)
+            # Português ou inglês, conforme o anúncio (RF-EV-10): abre o que acabou de ser gerado.
+            pdfs = [p for p in (caminho_cv_da_vaga(vaga_id, "pt"), caminho_cv_da_vaga(vaga_id, "en")) if p.is_file()]
+            if pdfs and hasattr(os, "startfile"):
+                os.startfile(max(pdfs, key=lambda p: p.stat().st_mtime))
         self.executar("Currículo desta vaga", ["vagas", "curriculo", vaga_id], depois=abrir)
 
     def _abrir_link(self, link: str | None) -> None:

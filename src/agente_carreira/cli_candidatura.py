@@ -323,7 +323,7 @@ def candidatar(
                                           help="Perguntas de triagem, uma por linha (* = eliminatória)."),
     foco: str | None = typer.Option(None, "--foco"),
     nivel: str | None = typer.Option(None, "--nivel"),
-    idioma: str = typer.Option("pt", "--idioma"),
+    idioma: str | None = typer.Option(None, "--idioma", help="pt ou en; padrão: o idioma do anúncio (RF-EV-10)."),
     copiloto: bool = typer.Option(False, "--copiloto", help="Não abrir o navegador, mesmo em plataforma assistida."),
     direto: bool = typer.Option(False, "--direto", help="Abre a vaga no site e preenche lá (sem perguntas aqui): "
                                 "o que o botão 'Quero me candidatar' do app usa."),
@@ -358,6 +358,10 @@ def candidatar(
 
     banco = carregar_respostas()
     foco = foco or (vaga.busca if vaga.busca in SINONIMOS_POR_FOCO else "backend-dotnet")
+    idioma = idioma or ("en" if vaga.idioma == "en" else "pt")  # anúncio em inglês: currículo em inglês
+    if idioma == "en":
+        console.print("[cyan]Anúncio em inglês: o currículo sai com títulos e rótulos em inglês. O texto das experiências "
+                      "segue como está no seu perfil (a tradução passa por 'agente cv reescrever', com sua aprovação).[/cyan]")
     plataforma = plataforma_da_url(vaga.link) if vaga.link else None
     linkedin_automatico = (plataforma == "linkedin" and central.linkedin_automatico.ativo and not copiloto
                            and not central.somente_sugestao and playwright_disponivel())

@@ -118,6 +118,12 @@ class TelaConfig:
              "volte para um dia anterior.", "Ver cópias", self._copias_seguranca, "secundario"),
             ("Relatório toda semana", "Um resumo da semana no domingo à noite.",
              "Agendar", lambda: self.executar("Agendar relatório semanal", ["relatorio", "agendar"]), "secundario"),
+            ("Glassdoor: " + ("ligado" if central.sites.glassdoor else "desligado"),
+             "Busca também no site do Glassdoor. Ele pede verificação de humano: com você no computador, o agente avisa "
+             "e espera você resolver; na busca das 7h, pula o Glassdoor naquele dia.",
+             "Desligar" if central.sites.glassdoor else "Ligar",
+             lambda: self.executar("Glassdoor", ["config", "definir", "sites.glassdoor",
+                                                 "false" if central.sites.glassdoor else "true"]), "secundario"),
             ("Modo só sugestões: " + ("LIGADO" if sugestao else "desligado"),
              "Ligado, o agente não abre nenhum site: só sugere. Bom para testar com calma.",
              "Desligar" if sugestao else "Ligar",
