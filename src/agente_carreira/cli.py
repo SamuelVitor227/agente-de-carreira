@@ -91,6 +91,9 @@ app.command("andamento")(andamento_cmd)
 from .cli_copias import copias_app  # noqa: E402
 
 app.add_typer(copias_app, name="copias")
+from .cli_dados import dados_app  # noqa: E402
+
+app.add_typer(dados_app, name="dados")
 
 
 @app.command("app")
@@ -150,8 +153,10 @@ def aceite(
 def main() -> None:
     """Ponto de entrada do comando 'agente': sem perfil-mestre, orienta em vez de mostrar traceback."""
     from .copias import garantir_copia_do_dia
+    from .operacao.credenciais import carregar_variaveis_do_usuario
     from .storage import PerfilAusente
 
+    carregar_variaveis_do_usuario()  # ex.: a pasta dos dados mudou (AGENTE_CARREIRA_DATA) depois que o terminal abriu
     try:
         garantir_copia_do_dia()  # a primeira vez no dia guarda uma cópia dos dados (7 dias)
     except OSError:

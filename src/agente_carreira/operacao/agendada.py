@@ -115,6 +115,9 @@ def _encurtar(caminho: Path) -> None:
 
 def rodar(args: list[str]) -> int:
     """Roda 'agente ARGS' sem janela, com a saída no log, e anota o resultado em data/agendadas.json."""
+    from .credenciais import carregar_variaveis_do_usuario
+
+    carregar_variaveis_do_usuario()  # a pasta dos dados pode ter mudado (RF-EV-19) depois da tarefa criada
     os.environ["AGENTE_ORIGEM"] = "agendada"
     os.environ.setdefault("COLUMNS", "110")
     nome = chave(args)
@@ -159,6 +162,12 @@ def _executar(args: list[str], saida) -> int:
         print(erro, flush=True)
     except BaseException:  # noqa: BLE001 - tudo vai para o log
         traceback.print_exc(file=saida)
+    if chave(args) == "vagas rodada":  # RF-EV-01: depois das vagas, os retornos das empresas (mesmo Outlook)
+        try:
+            print("\n----- retornos das candidaturas -----", flush=True)
+            get_command(app).main(args=["funil", "emails"], prog_name="agente", standalone_mode=False)
+        except BaseException:  # noqa: BLE001 - os retornos nunca derrubam a busca
+            traceback.print_exc(file=saida)
     print(f"===== fim: código {codigo} em {(datetime.now() - inicio).total_seconds():.0f} s =====", flush=True)
     return codigo
 

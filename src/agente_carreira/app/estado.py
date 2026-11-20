@@ -295,6 +295,65 @@ def explicar_nota(aderencia) -> list[str]:
     return linhas
 
 
+# ---------------------------------------------------------------- gráficos da tela Relatórios (RF-EV-20)
+
+NOMES_ORIGEM = {"linkedin-alerta": "LinkedIn (alertas de e-mail)", "linkedin:navegador": "LinkedIn (busca automática)",
+                "gupy:portal": "Gupy", "manual": "Adicionadas por você"}
+
+
+def nome_da_origem(origem: str) -> str:
+    """'pagina:empresa.gupy.io' → 'Gupy'; 'indeed-alerta' → 'Indeed (alertas de e-mail)'."""
+    if origem in NOMES_ORIGEM:
+        return NOMES_ORIGEM[origem]
+    if "gupy" in origem:
+        return "Gupy"
+    if origem.endswith("-alerta"):
+        return f"{origem.removesuffix('-alerta').capitalize()} (alertas de e-mail)"
+    if origem.startswith("pagina:"):
+        return "Páginas de empresas"
+    return origem
+
+
+def vagas_por_semana(base, semanas: int = 8, hoje=None) -> list[tuple[str, int]]:
+    """Vagas novas por semana (segunda a domingo), das mais antigas para a desta semana."""
+    hoje = hoje or datetime.now().astimezone().date()
+    inicio_semana = hoje - timedelta(days=hoje.weekday())
+    inicios = [inicio_semana - timedelta(weeks=n) for n in range(semanas - 1, -1, -1)]
+    contagem = dict.fromkeys(inicios, 0)
+    for v in base.itens:
+        dia = _utc(v.primeira_coleta).astimezone().date()
+        semana = dia - timedelta(days=dia.weekday())
+        if semana in contagem:
+            contagem[semana] += 1
+    return [(f"{s:%d/%m}", n) for s, n in contagem.items()]
+
+
+def funil_das_candidaturas(candidaturas) -> list[tuple[str, int]]:
+    """Quantas candidaturas chegaram a cada etapa, de "Enviada" a "Contratado"."""
+    from ..candidaturas import NOMES_ETAPA, ORDEM
+    from ..relatorios import alcancou, foi_aplicada
+
+    enviadas = [c for c in candidaturas.itens if foi_aplicada(c)]
+    etapas = ORDEM[ORDEM.index(Etapa.APLICADA):]
+    saida = [("Enviadas", len(enviadas))]
+    for i, etapa in enumerate(etapas[1:], 1):
+        adiante = set(etapas[i:])
+        saida.append((NOMES_ETAPA[etapa], sum(1 for c in enviadas if alcancou(c, adiante))))
+    return saida
+
+
+def vagas_boas_por_fonte(base, limiar: int) -> list[tuple[str, int]]:
+    """De onde vêm as vagas com nota a partir de `limiar` (a mesma vaga pode vir de mais de uma fonte)."""
+    from collections import Counter
+
+    contagem: Counter[str] = Counter()
+    for v in base.itens:
+        if v.nota >= limiar and not v.risco:
+            for nome in dict.fromkeys(nome_da_origem(f.origem) for f in v.fontes) or ["Adicionadas por você"]:
+                contagem[nome] += 1
+    return contagem.most_common(8)
+
+
 def quando_encontrada(momento: datetime | None, agora: datetime | None = None) -> str:
     if momento is None:
         return "—"

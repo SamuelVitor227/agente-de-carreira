@@ -59,6 +59,7 @@ class TelaRelatorios:
     def _pagina_relatorios(self, pai) -> None:
         corpo = area_rolavel(pai)
         self._cabecalho(corpo, "Relatórios", "Como está indo a sua busca: vagas, candidaturas e o que funciona melhor.")
+        self._graficos(corpo)
         grade = self._grade(corpo, 2)
         itens = [
             ("Painel geral", "Números da sua busca, com gráficos por fonte, área e versão do currículo. Abre no navegador.",
@@ -76,6 +77,45 @@ class TelaRelatorios:
         ]
         for i, (titulo, descricao, botao, comando, tipo) in enumerate(itens):
             self._cartao_acao(grade, titulo, descricao, botao, comando, i // 2, i % 2, tipo)
+
+    def _graficos(self, corpo) -> None:
+        """RF-EV-20: os números e os gráficos principais aqui mesmo, sem abrir o navegador."""
+        from ...candidaturas import carregar_candidaturas
+        from ...radar.modelos import carregar_base, carregar_config
+        from ...relatorios import montar_painel
+        from ..componentes import grafico_barras
+
+        base, candidaturas, config = carregar_base(), carregar_candidaturas(), carregar_config()
+        total = montar_painel(base, candidaturas).total
+        numeros = self._grade(corpo, 4)
+        for i, (valor, legenda) in enumerate([
+            (str(total.candidaturas), "Candidaturas enviadas"),
+            (f"{total.retornos}" + (f" ({total.taxa_retorno}%)" if total.candidaturas else ""), "Retornos das empresas"),
+            (str(total.entrevistas), "Entrevistas"),
+            (str(total.propostas), "Propostas"),
+        ]):
+            c = cartao(numeros, padx=16, pady=12)
+            c.grid(row=0, column=i, sticky="nsew", padx=8, pady=8)
+            rotulo(c, valor, F_NUMERO, DESTAQUE if valor[:1] not in ("0", "") else SUAVE, bg=CARTAO).pack(anchor="w")
+            rotulo(c, legenda, F_NORMAL, SUAVE, bg=CARTAO).pack(anchor="w")
+
+        graficos = self._grade(corpo, 2)
+        blocos = [
+            ("Vagas novas por semana", "Passe o mouse numa coluna para ver o número.",
+             estado.vagas_por_semana(base), True),
+            (f"De onde vêm as vagas boas (nota {config.limiar_salvar}+)", "Uma vaga pode vir de mais de uma fonte.",
+             estado.vagas_boas_por_fonte(base, config.limiar_salvar), False),
+            ("Funil das candidaturas", "Quantas chegaram a cada etapa.", estado.funil_das_candidaturas(candidaturas), False),
+        ]
+        for i, (titulo, explicacao, dados, vertical) in enumerate(blocos):
+            c = cartao(graficos, padx=16, pady=14)
+            c.grid(row=i // 2, column=i % 2, sticky="nsew", padx=8, pady=8)
+            rotulo(c, titulo, F_NEGRITO, bg=CARTAO).pack(anchor="w")
+            rotulo(c, explicacao, F_PEQUENA, SUAVE, bg=CARTAO).pack(anchor="w", pady=(0, 8))
+            if any(v for _, v in dados):
+                grafico_barras(c, dados, vertical=vertical, largura=440).pack(anchor="w")
+            else:
+                rotulo(c, "Ainda sem dados: aparece aqui quando houver.", F_NORMAL, SUAVE, bg=CARTAO).pack(anchor="w", pady=12)
 
     def _abrir_painel(self) -> None:
         try:

@@ -137,6 +137,39 @@ def ler_alertas(pagina, consultas: list[str], ja_processados: set[str], *, por_c
     return mensagens, avisos
 
 
+LIMITE_EMPRESAS = 15
+
+
+def consultas_de_retorno(candidaturas) -> list[str]:
+    """RF-EV-01: uma pesquisa por empresa com candidatura enviada e ainda aberta (o nome entre aspas)."""
+    from ..relatorios import foi_aplicada
+
+    empresas: list[str] = []
+    for c in candidaturas.itens:
+        nome = " ".join((c.empresa or "").replace('"', " ").split())
+        if nome and foi_aplicada(c) and not c.encerrada and nome.lower() not in {e.lower() for e in empresas}:
+            empresas.append(nome)
+    return [f'"{e}"' for e in empresas[:LIMITE_EMPRESAS]]
+
+
+def ler_retornos(candidaturas, ja_processados: set[str], *, abrir_sessao=None, dormir: Dormir = time.sleep,
+                 por_consulta: int = 5) -> tuple[list[tuple[str, EmailMessage]], list[str]]:
+    """Abre o Outlook no navegador do agente e traz os e-mails das empresas onde você se candidatou (só leitura;
+    os não lidos continuam não lidos). Devolve ([(message-id, e-mail)], avisos)."""
+    consultas = consultas_de_retorno(candidaturas)
+    if not consultas:
+        return [], []
+    from ..navegador import NavegadorOcupado, SessaoNavegador
+
+    try:
+        with (abrir_sessao or SessaoNavegador)(**({} if abrir_sessao else {"uso": "a leitura dos retornos no Outlook"})) as sessao:
+            return ler_alertas(sessao.pagina, consultas, ja_processados, por_consulta=por_consulta, dormir=dormir)
+    except NavegadorOcupado as erro:
+        return [], [f"Retornos não lidos agora: {erro}"]
+    except LoginOutlook as erro:
+        return [], [f"Outlook: {erro}"]
+
+
 def leitor_da_rodada(consultas: list[str], saude, *, por_consulta: int = 15, abrir_sessao=None,
                      dormir: Dormir = time.sleep):
     """Fonte de e-mails da rodada: recebe os message-ids já processados e devolve (mensagens, avisos, falhas)."""

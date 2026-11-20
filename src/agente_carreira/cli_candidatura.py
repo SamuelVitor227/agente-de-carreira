@@ -679,6 +679,16 @@ def funil_emails(
             console.print(f"[yellow]IMAP: {escape(str(erro))}[/yellow]")
 
     colecao, pendencias = carregar_candidaturas(), carregar_pendencias()
+    if carregar_configuracao().email_navegador.ativo and not sem_imap:  # RF-EV-01: o mesmo Outlook dos alertas
+        from .navegador import playwright_disponivel
+        from .radar.outlook_web import consultas_de_retorno, ler_retornos
+
+        if consultas_de_retorno(colecao) and playwright_disponivel():
+            console.print("[magenta]Outlook: procurando e-mails das empresas onde você se candidatou (só leitura)…[/magenta]")
+            lidas, avisos = ler_retornos(colecao, set(pendencias.processados))
+            mensagens += lidas
+            for aviso in avisos:
+                console.print(f"[yellow]{escape(aviso)}[/yellow]")
     lembretes = carregar_lembretes()
     aplicadas = novas_pendencias = 0
     for msgid, msg in mensagens:
@@ -703,6 +713,13 @@ def funil_emails(
     salvar_pendencias(pendencias)
     console.print(f"{len(mensagens)} e-mail(s) lido(s) · {aplicadas} atualização(ões) · {novas_pendencias} para confirmar"
                   + (" — rode 'agente funil confirmar'." if novas_pendencias else "."))
+    if aplicadas or novas_pendencias:
+        from .operacao.notificacoes import notificar
+
+        notificar("lembrete_funil", "Retorno de empresa",
+                  f"{aplicadas} candidatura(s) mudaram de etapa por e-mail"
+                  + (f" e {novas_pendencias} e-mail(s) esperam você confirmar (Minhas candidaturas)." if novas_pendencias
+                     else ". Veja em Minhas candidaturas."), carregar_configuracao())
 
 
 @funil_app.command("confirmar")

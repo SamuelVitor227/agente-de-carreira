@@ -115,3 +115,96 @@ def test_escolha_sobre_vagas_remotas_elimina_ou_nao():
     config.remoto = "brasil"
     assert any("fora do Brasil" in m for m in avaliar_filtros(vaga, config, perfil, date.today())[1])
     assert motivo_remoto(VagaEncontrada(titulo="Dev", local="Brasil", modelo="remoto"), "nao").startswith("remota")
+
+
+# ---------------------------------------------------------------- RF-EV-01
+
+def test_retorno_de_empresa_pelo_outlook_move_o_funil(monkeypatch):
+    from email.message import EmailMessage
+
+    from typer.testing import CliRunner
+
+    from agente_carreira.candidaturas import Candidatura, Candidaturas, Etapa, carregar_candidaturas, salvar_candidaturas
+    from agente_carreira.cli import app
+    from agente_carreira.configuracao import carregar_configuracao, salvar_configuracao
+    from agente_carreira.radar import outlook_web
+
+    cand = Candidatura(vaga_titulo="Desenvolvedor .NET Júnior", empresa="Omega Tecnologia", foco="backend-dotnet",
+                       variante="cv")
+    cand.mudar_status(Etapa.APLICADA)
+    encerrada = Candidatura(vaga_titulo="Dev", empresa="Beta", foco="x", variante="cv")
+    encerrada.mudar_status(Etapa.APLICADA)
+    encerrada.mudar_status(Etapa.REPROVADO)
+    salvar_candidaturas(Candidaturas(itens=[cand, encerrada]))
+    assert outlook_web.consultas_de_retorno(carregar_candidaturas()) == ['"Omega Tecnologia"']  # só as abertas
+
+    central = carregar_configuracao()
+    central.email_navegador.ativo = True
+    salvar_configuracao(central)
+    msg = EmailMessage()
+    msg["Subject"] = "Omega Tecnologia: próxima etapa do processo"
+    msg["Message-ID"] = "<outlook-web-abc>"
+    msg.set_content("Olá! Gostaríamos de agendar uma entrevista com o RH para a vaga de Desenvolvedor .NET Júnior "
+                    "na Omega Tecnologia.")
+    vistos = []
+    monkeypatch.setattr(outlook_web, "ler_retornos", lambda col, ja, **k: vistos.append(set(ja)) or ([(msg["Message-ID"], msg)], []))
+    monkeypatch.setattr("agente_carreira.navegador.playwright_disponivel", lambda: True)
+    resultado = CliRunner().invoke(app, ["funil", "emails"])
+    assert resultado.exit_code == 0, resultado.output
+    assert carregar_candidaturas().buscar(cand.id).status == Etapa.ENTREVISTA_RH
+    CliRunner().invoke(app, ["funil", "emails"])
+    assert "<outlook-web-abc>" in vistos[-1]  # o mesmo e-mail não é processado duas vezes
+
+
+# ---------------------------------------------------------------- RF-EV-19
+
+def test_reconhece_pasta_na_nuvem(monkeypatch, tmp_path):
+    from agente_carreira.operacao.local_dados import servico_de_nuvem
+
+    monkeypatch.setenv("OneDrive", str(tmp_path / "OneDrive"))
+    assert servico_de_nuvem(tmp_path / "OneDrive" / "Área de Trabalho" / "agente" / "data") == "OneDrive"
+    assert servico_de_nuvem(tmp_path / "AppData" / "Local" / "AgenteCarreira" / "data") is None
+    assert servico_de_nuvem(tmp_path / "Google Drive" / "x") == "Google Drive"
+
+
+def test_mover_dados_copia_confere_e_aponta_a_variavel(dados, tmp_path, monkeypatch):
+    from agente_carreira.operacao import local_dados
+    from agente_carreira.radar.modelos import BaseVagas, VagaEncontrada, carregar_base, salvar_base
+
+    salvar_base(BaseVagas(itens=[VagaEncontrada(id="v1", titulo="Dev")]))
+    (dados / "navegador").mkdir()
+    (dados / "navegador" / "Cookies").write_bytes(b"x")
+    gravadas = {}
+    destino = tmp_path.parent / f"{tmp_path.name}-destino" / "data"
+    novo = local_dados.mover_dados(destino, gravar_variavel=gravadas.update)
+    assert novo == destino.resolve() and gravadas == {"AGENTE_CARREIRA_DATA": str(destino.resolve())}
+    assert (destino / "navegador" / "Cookies").is_file() and not dados.exists()
+    assert [v.id for v in carregar_base().itens] == ["v1"]  # o agente já lê da pasta nova
+    with pytest.raises(local_dados.NaoDaParaMover):
+        local_dados.mover_dados(destino, gravar_variavel=gravadas.update)  # já está lá
+
+
+# ---------------------------------------------------------------- RF-EV-20
+
+def test_dados_dos_graficos_da_tela_relatorios():
+    from agente_carreira.candidaturas import Candidatura, Candidaturas, Etapa
+    from agente_carreira.radar.modelos import Aderencia, BaseVagas, Fonte
+
+    hoje = date(2026, 11, 20)  # sexta: a semana começa na segunda 16/11
+    agora = datetime(2026, 11, 20, 12, tzinfo=timezone.utc)
+    base = BaseVagas(itens=[
+        VagaEncontrada(titulo="A", primeira_coleta=agora, aderencia=Aderencia(nota=70),
+                       fontes=[Fonte(tipo="pagina", origem="gupy:portal"), Fonte(tipo="pagina", origem="pagina:x.gupy.io")]),
+        VagaEncontrada(titulo="B", primeira_coleta=agora - timedelta(days=7), aderencia=Aderencia(nota=55),
+                       fontes=[Fonte(tipo="email", origem="linkedin-alerta")]),
+        VagaEncontrada(titulo="C", primeira_coleta=agora, aderencia=Aderencia(nota=20),
+                       fontes=[Fonte(tipo="email", origem="linkedin-alerta")]),
+    ])
+    assert estado.vagas_por_semana(base, 3, hoje) == [("02/11", 0), ("09/11", 1), ("16/11", 2)]
+    assert estado.vagas_boas_por_fonte(base, 50) == [("Gupy", 1), ("LinkedIn (alertas de e-mail)", 1)]  # sem contar 2x
+    a, b = Candidatura(vaga_titulo="X", foco="f", variante="v"), Candidatura(vaga_titulo="Y", foco="f", variante="v")
+    for c in (a, b):
+        c.mudar_status(Etapa.APLICADA)
+    a.mudar_status(Etapa.ENTREVISTA_RH)
+    funil = dict(estado.funil_das_candidaturas(Candidaturas(itens=[a, b])))
+    assert funil["Enviadas"] == 2 and funil["Em análise"] == 1 and funil["Entrevista RH"] == 1 and funil["Proposta"] == 0

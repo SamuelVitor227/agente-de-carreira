@@ -221,3 +221,54 @@ def escolher(pai, titulo: str, explicacao: str, opcoes: list[tuple[str, str, str
     janela.grab_set()
     janela.wait_window(janela)
     return escolha[0]
+
+
+# ---------------------------------------------------------------- gráficos (RF-EV-20)
+
+# Uma série por gráfico: verde validado (faixa de luminosidade, saturação mínima e contraste 3:1 no fundo branco).
+COR_SERIE = "#1f8a5c"
+COR_GRADE = "#e2e8f0"
+
+
+def grafico_barras(pai, dados: list[tuple[str, int]], *, vertical: bool = False, largura: int = 440,
+                   bg: str = CARTAO) -> tk.Canvas:
+    """Barras simples desenhadas no próprio app: horizontais (categorias) ou colunas (tempo).
+
+    Valor escrito na ponta de cada barra horizontal; nas colunas, o valor aparece ao passar o mouse (e o maior fica
+    escrito). Texto sempre na cor do texto, nunca na cor da barra.
+    """
+    maximo = max((v for _, v in dados), default=0) or 1
+    if vertical:
+        altura, base, topo, esquerda = 170, 140, 18, 8
+        canvas = tk.Canvas(pai, width=largura, height=altura, bg=bg, highlightthickness=0)
+        passo = (largura - esquerda * 2) / max(len(dados), 1)
+        canvas.create_line(esquerda, base, largura - esquerda, base, fill=COR_GRADE)
+        dica = canvas.create_text(0, 0, text="", font=F_PEQUENA, fill=TEXTO, anchor="s")
+        for i, (rotulo_barra, valor) in enumerate(dados):
+            x0 = esquerda + i * passo + 3
+            x1 = esquerda + (i + 1) * passo - 3  # 6 px de folga entre colunas
+            y0 = base - (base - topo) * valor / maximo
+            barra = canvas.create_rectangle(x0, y0 if valor else base - 1, x1, base, fill=COR_SERIE, outline="")
+            canvas.create_text((x0 + x1) / 2, base + 12, text=rotulo_barra, font=F_PEQUENA, fill=SUAVE)
+            if valor == maximo and valor:
+                canvas.create_text((x0 + x1) / 2, y0 - 4, text=str(valor), font=F_PEQUENA, fill=TEXTO, anchor="s")
+            # Área de passar o mouse maior que a barra: a coluna inteira.
+            alvo = canvas.create_rectangle(x0 - 3, topo - 14, x1 + 3, base, fill="", outline="")
+            for item in (barra, alvo):
+                canvas.tag_bind(item, "<Enter>", lambda _e, x=(x0 + x1) / 2, y=y0, r=rotulo_barra, v=valor:
+                                canvas.itemconfigure(dica, text=f"semana de {r}: {v}") or canvas.coords(dica, x, max(y - 4, 14)))
+                canvas.tag_bind(item, "<Leave>", lambda _e: canvas.itemconfigure(dica, text=""))
+        canvas.tag_raise(dica)
+        return canvas
+    linha, coluna_rotulo = 26, 170
+    altura = max(linha * len(dados), linha) + 6
+    canvas = tk.Canvas(pai, width=largura, height=altura, bg=bg, highlightthickness=0)
+    area = largura - coluna_rotulo - 44
+    for i, (rotulo_barra, valor) in enumerate(dados):
+        y = 4 + i * linha
+        canvas.create_text(coluna_rotulo - 8, y + 9, text=rotulo_barra, font=F_PEQUENA, fill=SUAVE, anchor="e")
+        fim = coluna_rotulo + max(area * valor / maximo, 2 if valor else 0)
+        if valor:
+            canvas.create_rectangle(coluna_rotulo, y + 2, fim, y + 16, fill=COR_SERIE, outline="")
+        canvas.create_text(fim + 6, y + 9, text=str(valor), font=F_PEQUENA, fill=TEXTO, anchor="w")
+    return canvas

@@ -99,6 +99,10 @@ class TelaConfig:
         sugestao = central.somente_sugestao
         empresas = sorted({e.nome for b in buscas for e in b.empresas_alvo})
         nomes_remoto = {"qualquer": "de qualquer lugar", "brasil": "só de empresas no Brasil", "nao": "nenhuma"}
+        from ...operacao.local_dados import servico_de_nuvem
+        from ...storage import diretorio_dados
+
+        nuvem = servico_de_nuvem(diretorio_dados())
         itens = [
             ("Vagas remotas: " + nomes_remoto[config_vagas.remoto],
              "Presencial e híbrido valem só em BH e região. Aqui você escolhe que vagas remotas quer receber.",
@@ -125,8 +129,12 @@ class TelaConfig:
              "Configurar e-mail", self.configurar_email, "secundario"),
             ("Atalho na Área de Trabalho", "Recria o ícone do agente na sua Área de Trabalho.",
              "Criar atalho", self._criar_atalho, "secundario"),
-            ("Pasta dos seus dados", "Onde ficam seu perfil, currículos gerados e relatórios. Nada disso vai para a internet.",
+            ("Pasta dos seus dados", "Onde ficam seu perfil, currículos gerados e relatórios. Nada disso vai para o "
+             "GitHub nem para sites." + (f" Atenção: a pasta sincroniza com o {nuvem}." if nuvem else ""),
              "Abrir pasta", self.abrir_pasta_dados, "secundario"),
+            *([("Tirar os dados da nuvem", f"Seus dados (inclusive os logins do LinkedIn e do Outlook no navegador do "
+                f"agente) estão no {nuvem}. Mova para uma pasta só deste computador.", "Mover para este computador",
+                self._mover_dados, "primario")] if nuvem else []),
             ("Fontes de vagas", "Mostra se algum site de vagas mudou ou deu erro.",
              "Verificar", lambda: self.executar("Fontes de vagas", ["saude"]), "secundario"),
             ("Modo avançado", "Abre o terminal com os comandos do agente (para quem é de TI).",
@@ -201,6 +209,32 @@ class TelaConfig:
             if r["pagina"].strip():
                 args += ["--pagina", r["pagina"].strip()]
             self.executar("Adicionar empresa", args)
+
+    def _mover_dados(self) -> None:
+        """RF-EV-19: dados (e logins do navegador do agente) fora do OneDrive."""
+        from ...operacao.local_dados import destino_padrao
+
+        if self.tarefas_rodando():
+            messagebox.showwarning(NOME_APP, "Há tarefas rodando. Espere terminarem (ou pare-as) antes de mover os dados.",
+                                   parent=self.raiz)
+            return
+        if not messagebox.askyesno(NOME_APP, f"Mover os seus dados para {destino_padrao()}?\n\nO agente copia tudo, "
+                                   "confere e só então apaga a pasta antiga (no OneDrive). Feche o navegador do agente "
+                                   "antes. Depois você recria o atalho e a busca automática.", parent=self.raiz):
+            return
+
+        def depois() -> None:
+            from ...operacao.credenciais import carregar_variaveis_do_usuario
+
+            carregar_variaveis_do_usuario()  # este app passa a usar a pasta nova
+            try:
+                criar_atalho()  # o atalho apontava para a pasta antiga
+            except RuntimeError:
+                pass
+            messagebox.showinfo(NOME_APP, "Pronto: seus dados agora ficam só neste computador. O atalho foi recriado.\n\n"
+                                "Feche e abra o app. Depois, recrie a busca automática: Configurações → Busca automática "
+                                "todo dia → Agendar.", parent=self.raiz)
+        self.executar("Mover os dados", ["dados", "mover"], depois=depois)
 
     def _agendar_busca(self) -> None:
         r = perguntar(self.raiz, "Busca automática", "A busca roda sem abrir janela. Se o computador estiver desligado "

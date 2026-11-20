@@ -17,6 +17,8 @@ def dados(tmp_path, monkeypatch):
     monkeypatch.setenv("AGENTE_CARREIRA_DATA", str(tmp_path))
     monkeypatch.setenv("AGENTE_ORIGEM", "teste")  # rodar() muda essas duas; o monkeypatch desfaz no fim
     monkeypatch.setenv("COLUMNS", "112")
+    # rodar() lê as variáveis AGENTE_* do Windows; nos testes, as do seu computador não entram.
+    monkeypatch.setattr("agente_carreira.operacao.credenciais.carregar_variaveis_do_usuario", lambda: None)
     return tmp_path
 
 
