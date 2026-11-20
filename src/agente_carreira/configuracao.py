@@ -72,6 +72,7 @@ class Notificacao(BaseModel):
 
     canal: Literal["arquivo", "email", "push"] = "email"
     email_para: str | None = None
+    aviso_na_tela: bool = True  # RF-EV-02: também avisa no canto da tela do Windows, sem configurar nada
     eventos: dict[str, bool] = Field(default_factory=lambda: {e: True for e in EVENTOS})
 
 

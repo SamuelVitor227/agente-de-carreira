@@ -221,6 +221,28 @@ def _motivos_da_busca(vaga: VagaEncontrada, busca: BuscaSalva, perfil: PerfilMes
     return motivos
 
 
+_UF = re.compile(r"(?:,|-|\()\s*(?:ac|al|ap|am|ba|ce|df|es|go|ma|mt|ms|mg|pa|pb|pr|pe|pi|rj|rn|rs|ro|rr|sc|sp|se|to)\b")
+
+
+def no_brasil(vaga: VagaEncontrada) -> bool:
+    """A vaga é de empresa no Brasil? Pelo local ("Brasil", "Vitória, ES"); sem local, pelo idioma do anúncio."""
+    local = norm(vaga.local)
+    if "brasil" in local or "brazil" in local or _UF.search(local):
+        return True
+    if local and local not in CIDADES_GENERICAS:
+        return False  # "Germany", "Lisboa, Portugal", "LATAM"...
+    return (vaga.idioma or "pt") == "pt"
+
+
+def motivo_remoto(vaga: VagaEncontrada, preferencia: str) -> str | None:
+    """RF-EV-14: a sua escolha sobre vagas remotas (qualquer lugar, só no Brasil ou nenhuma)."""
+    if preferencia == "nao":
+        return "remota, e você escolheu não receber vagas remotas"
+    if preferencia == "brasil" and not no_brasil(vaga):
+        return f"remota de fora do Brasil ({vaga.local or 'anúncio em ' + (vaga.idioma or '?')})"
+    return None
+
+
 def avaliar_filtros(
     vaga: VagaEncontrada, config: ConfigVagas, perfil: PerfilMestre, hoje: date
 ) -> tuple[str | None, list[str]]:
@@ -230,6 +252,8 @@ def avaliar_filtros(
         gerais.append("empresa bloqueada")
     if eh_estagio(vaga) and not matricula_ativa(perfil, hoje):
         gerais.append("estágio sem matrícula ativa — registre a formação como 'cursando' com a conclusão prevista (RN-07)")
+    if vaga.modelo == "remoto" and (motivo := motivo_remoto(vaga, config.remoto)):
+        gerais.append(motivo)
     if not config.buscas:
         return None, gerais
 

@@ -146,17 +146,69 @@ class TelaPerfil:
                           depois=lambda: self.abrir_pasta(diretorio_dados() / "saidas"))
 
     def _respostas(self) -> None:
-        from ...respostas import PERGUNTAS, carregar_respostas
+        """RF-EV-06: todas as perguntas comuns dos formulários numa tela, já com o que sai do seu perfil."""
+        from ...radar.modelos import carregar_config
+        from ...respostas import (ESSENCIAIS, EXEMPLOS, LONGAS, PERGUNTAS, carregar_respostas, definir_resposta,
+                                  salvar_respostas, sugestoes_do_perfil)
+        from ...storage import PerfilAusente, carregar_perfil
 
         banco = carregar_respostas()
-        opcoes = [(chave, f"{rotulo_}{'  ✓' if banco.resposta(chave) else ''}") for chave, (rotulo_, _) in PERGUNTAS.items()]
-        r = perguntar(self.raiz, "Respostas prontas", "Escolha a pergunta (✓ = já respondida) e escreva sua resposta.",
-                      [("chave", "Pergunta", "escolha", opcoes, None, None),
-                       ("resposta", "Sua resposta", "textolongo", None, "", "Em branco = apagar a resposta guardada.")],
-                      botao="Salvar")
-        if not r:
-            return
-        if r["resposta"].strip():
-            self.executar("Salvar resposta", ["respostas", "definir", r["chave"], r["resposta"].strip()])
-        elif banco.resposta(r["chave"]):
-            self.executar("Apagar resposta", ["respostas", "remover", r["chave"]])
+        try:
+            sugestoes = sugestoes_do_perfil(carregar_perfil(), carregar_config())
+        except PerfilAusente:
+            sugestoes = {}
+        janela = tk.Toplevel(self.raiz)
+        janela.title(f"Respostas prontas — {NOME_APP}")
+        janela.configure(bg=FUNDO)
+        janela.geometry("760x680")
+        janela.transient(self.raiz)
+        topo = tk.Frame(janela, bg=FUNDO, padx=22, pady=16)
+        topo.pack(fill="x")
+        rotulo(topo, "Respostas prontas", F_SUBTITULO).pack(anchor="w")
+        rotulo(topo, "As perguntas que os formulários de vaga sempre fazem. Responda uma vez: o agente preenche "
+               "sozinho nas candidaturas (só com o que você guardar aqui). As marcadas com ★ quase todo formulário "
+               "pede. O que veio do seu perfil está escrito em verde: confira antes de salvar.",
+               F_NORMAL, SUAVE, wraplength=700).pack(anchor="w", pady=(4, 0))
+        rodape = tk.Frame(janela, bg=FUNDO, padx=22, pady=12)
+        rodape.pack(side="bottom", fill="x")
+        corpo_externo = tk.Frame(janela, bg=FUNDO)
+        corpo_externo.pack(fill="both", expand=True, padx=(22, 0))
+        corpo = area_rolavel(corpo_externo)
+        leitores = {}
+        for chave, (pergunta, uso) in PERGUNTAS.items():
+            bloco = tk.Frame(corpo, bg=FUNDO)
+            bloco.pack(fill="x", pady=6, padx=(0, 18))
+            rotulo(bloco, ("★ " if chave in ESSENCIAIS else "") + pergunta, F_NEGRITO).pack(anchor="w")
+            guardada = banco.resposta(chave)
+            valor = guardada or sugestoes.get(chave, "")
+            cor = DESTAQUE if (not guardada and chave in sugestoes) else TEXTO
+            if chave in LONGAS:
+                caixa = tk.Text(bloco, height=3, font=F_NORMAL, wrap="word", relief="solid", bd=1, fg=cor)
+                caixa.insert("1.0", valor)
+                caixa.pack(fill="x", pady=(3, 0))
+                leitores[chave] = lambda c=caixa: c.get("1.0", "end").strip()
+            else:
+                var = tk.StringVar(value=valor)
+                entrada = tk.Entry(bloco, textvariable=var, font=F_NORMAL, relief="solid", bd=1, fg=cor)
+                entrada.pack(fill="x", pady=(3, 0), ipady=3)
+                leitores[chave] = var.get
+            ajuda = EXEMPLOS.get(chave, uso)
+            rotulo(bloco, ajuda, F_PEQUENA, SUAVE, wraplength=680).pack(anchor="w")
+
+        def salvar() -> None:
+            novo = carregar_respostas()
+            for chave, ler in leitores.items():
+                texto = ler()
+                if texto:
+                    if texto != (novo.resposta(chave) or ""):
+                        definir_resposta(novo, chave, texto)  # guardar = sua aprovação (RN-09)
+                else:
+                    novo.itens.pop(chave, None)
+            salvar_respostas(novo)
+            faltam = [PERGUNTAS[c][0] for c in ESSENCIAIS if not novo.resposta(c)]
+            janela.destroy()
+            self.avisar("Respostas guardadas ✓" + (f" Ainda faltam {len(faltam)} das principais." if faltam else ""))
+            self.atualizar()
+
+        Botao(rodape, "Salvar respostas", salvar, "primario").pack(side="right")
+        Botao(rodape, "Cancelar", janela.destroy).pack(side="right", padx=8)

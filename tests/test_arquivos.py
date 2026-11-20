@@ -179,3 +179,43 @@ def test_restaurar_guarda_antes_o_estado_atual(dados):
     assert [v["id"] for v in dados_reserva["itens"]] == ["1", "2"]
     with pytest.raises(ValueError):
         copias.restaurar("2020-01-01")
+
+
+# ---------------------------------------------------------------- versão antiga do código aberta
+
+def test_processo_com_codigo_antigo_nao_apaga_opcao_nova(dados):
+    """O app aberto antes de uma atualização não conhece uma opção nova; ao gravar, ela tem que continuar lá."""
+    from pydantic import BaseModel, Field
+
+    from agente_carreira.arquivos import gravar_modelo
+
+    class Item(BaseModel):
+        id: str
+        nome: str
+
+    class ConfigAntiga(BaseModel):
+        nome: str = "x"
+        itens: list[Item] = Field(default_factory=list)
+
+    caminho = dados / "config-teste.json"
+    caminho.write_text(json.dumps({"nome": "a", "email_navegador": {"ativo": True},
+                                   "itens": [{"id": "1", "nome": "um", "conferida_em": "2026-11-19"}]}), encoding="utf-8")
+    antiga = ler_modelo(caminho, ConfigAntiga)
+    antiga.nome = "b"
+    gravar_modelo(caminho, antiga)
+    salvo = json.loads(caminho.read_text(encoding="utf-8"))
+    assert salvo["nome"] == "b" and salvo["email_navegador"] == {"ativo": True}
+    assert salvo["itens"][0]["conferida_em"] == "2026-11-19"  # campo novo dentro de item da lista também fica
+
+
+def test_resposta_apagada_continua_apagada(dados):
+    from agente_carreira.respostas import carregar_respostas, definir_resposta, salvar_respostas
+
+    banco = carregar_respostas()
+    definir_resposta(banco, "cnh", "B")
+    definir_resposta(banco, "viagens", "eventualmente")
+    salvar_respostas(banco)
+    banco = carregar_respostas()
+    banco.itens.pop("cnh")
+    salvar_respostas(banco)
+    assert set(carregar_respostas().itens) == {"viagens"}

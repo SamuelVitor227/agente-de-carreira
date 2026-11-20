@@ -10,6 +10,7 @@ No navegador do agente, enquanto você navega no site:
 
 from __future__ import annotations
 
+import re
 import time
 from collections.abc import Callable
 from urllib.parse import urlparse
@@ -110,6 +111,85 @@ def preencher_vazios(pagina, campos: list[CampoParaPreencher], ja_feitos: set[tu
     return feitos
 
 
+# ---------------------------------------------------------------- perguntas do formulário (RF-EV-07 e RF-EV-08)
+
+# Campos vazios com o texto da pergunta ao lado (rótulo, aria-label ou o texto do bloco em volta). Cada um ganha uma
+# marca para o Python achar de novo. E-mail e telefone ficam com a passada dos dados básicos.
+JS_PERGUNTAS = """() => {
+  const visivel = e => !!(e.offsetWidth || e.offsetHeight || e.getClientRects().length);
+  const texto = e => {
+    if (e.labels && e.labels.length) return [...e.labels].map(l => l.innerText).join(' ');
+    const aria = e.getAttribute('aria-label'); if (aria) return aria;
+    const ids = e.getAttribute('aria-labelledby');
+    if (ids) return ids.split(/\\s+/).map(i => (document.getElementById(i) || {}).innerText || '').join(' ');
+    let p = e.parentElement;
+    for (let n = 0; n < 4 && p; n++, p = p.parentElement) { const t = (p.innerText || '').trim(); if (t) return t.slice(0, 300); }
+    return e.getAttribute('placeholder') || '';
+  };
+  const saida = [];
+  document.querySelectorAll('textarea, input, select').forEach((e, i) => {
+    const tipo = (e.getAttribute('type') || '').toLowerCase();
+    if (e.tagName === 'INPUT' && !['', 'text', 'number', 'url'].includes(tipo)) return;
+    if (e.disabled || e.readOnly || !visivel(e)) return;
+    const valor = e.tagName === 'SELECT' ? (e.selectedIndex > 0 ? 'x' : '') : (e.value || '');
+    if (valor) return;
+    e.setAttribute('data-agente-pergunta', String(i));
+    saida.push({marca: String(i), tag: e.tagName.toLowerCase(), tipo, rotulo: texto(e)});
+  });
+  return saida;
+}"""
+# Campo aberto de apresentação: recebe a mensagem do kit da vaga (curta, só com fatos do perfil).
+PERGUNTA_CARTA = re.compile(
+    r"carta|cover letter|mensagem (para|ao|à) (o |a )?(recrutador|recrutadora|empresa|time|gestor)|apresente-se"
+    r"|fale (um pouco )?sobre (voc[eê]|si)|conte (um pouco )?sobre voc[eê]|por ?que (voc[eê] )?(quer|deseja|gostaria)",
+    re.IGNORECASE)
+
+
+def responder_perguntas(pagina, responder: Callable[[str], str | None], mensagem: str | None,
+                        ja_feitos: set[tuple[str, str]]) -> list[str]:
+    """Uma passada: responde as perguntas vazias só com o banco aprovado, o perfil e a mensagem da vaga (RN-09).
+
+    Diversidade nunca é respondida; número só recebe um valor quando a resposta guardada tem um único número.
+    Devolve o começo de cada pergunta respondida.
+    """
+    from .respostas import chave_da_pergunta
+
+    url = (pagina.url or "").split("?")[0].split("#")[0]
+    try:
+        perguntas = pagina.evaluate(JS_PERGUNTAS) or []
+    except Exception:  # noqa: BLE001 - página trocando ou fechada
+        return []
+    feitos: list[str] = []
+    for pergunta in perguntas:
+        rotulo = " ".join(str(pergunta.get("rotulo") or "").split())[:300]
+        chave = (url, "pergunta:" + rotulo[:120])
+        if not rotulo or chave in ja_feitos:
+            continue
+        if chave_da_pergunta(rotulo) == "diversidade":  # é sua: o agente não responde
+            ja_feitos.add(chave)
+            continue
+        carta = pergunta.get("tag") == "textarea" and PERGUNTA_CARTA.search(rotulo)
+        resposta = mensagem if (carta and mensagem) else responder(rotulo)
+        if not resposta:
+            continue  # fica para você (e pode ganhar resposta se você guardar uma no banco)
+        alvo = pagina.locator(f'[data-agente-pergunta="{pergunta.get("marca")}"]')
+        try:
+            if pergunta.get("tag") == "select":
+                alvo.select_option(label=resposta, timeout=2_000)
+            elif pergunta.get("tipo") == "number":
+                numeros = re.findall(r"\d[\d.]*", resposta)
+                if len(numeros) != 1:
+                    continue
+                alvo.fill(numeros[0].replace(".", ""), timeout=3_000)
+            else:
+                alvo.fill(resposta, timeout=3_000)
+        except Exception:  # noqa: BLE001 - opção que não existe na lista, campo que sumiu...
+            continue
+        ja_feitos.add(chave)
+        feitos.append(rotulo[:60] + ("…" if len(rotulo) > 60 else ""))
+    return feitos
+
+
 def campo_curriculo(caminho) -> CampoParaPreencher:
     return CampoParaPreencher(id="basico:cv", rotulo="Currículo (arquivo)", valor=str(caminho), arquivo=True)
 
@@ -150,8 +230,13 @@ def dominio_de(url: str) -> str:
 
 def acompanhar(contexto, dominios: list[str], campos: list[CampoParaPreencher], *,
                ao_preencher: Callable[[str, list[str]], None] = lambda url, rotulos: None,
-               dormir: Callable[[float], None] = time.sleep, horas: float = 3, intervalo_s: float = 2.5) -> int:
-    """Enquanto o navegador estiver aberto, preenche os formulários dos domínios indicados. Devolve o total preenchido."""
+               dormir: Callable[[float], None] = time.sleep, horas: float = 3, intervalo_s: float = 2.5,
+               responder: Callable[[str], str | None] | None = None, mensagem: str | None = None) -> int:
+    """Enquanto o navegador estiver aberto, preenche os formulários dos domínios indicados. Devolve o total preenchido.
+
+    Com `responder`, também responde as perguntas do formulário (pretensão, disponibilidade, inglês...) e põe a
+    `mensagem` da vaga no campo de apresentação.
+    """
     ja_feitos: set[tuple[str, str]] = set()
     total = 0
     for _ in range(int(horas * 3600 / intervalo_s)):
@@ -169,6 +254,8 @@ def acompanhar(contexto, dominios: list[str], campos: list[CampoParaPreencher], 
             if not any(host == d or host.endswith("." + d) for d in dominios):
                 continue
             feitos = preencher_vazios(pagina, campos, ja_feitos)
+            if responder is not None:
+                feitos += responder_perguntas(pagina, responder, mensagem, ja_feitos)
             if feitos:
                 total += len(feitos)
                 ao_preencher(pagina.url, feitos)

@@ -113,6 +113,8 @@ class ConfigVagas(BaseModel):
     limiar_candidatar: int = 70
     limiar_salvar: int = 50
     dias_validade: int = 30        # RF-VG-12
+    # RF-EV-14: vagas remotas de qualquer lugar, só de empresas no Brasil, ou nenhuma.
+    remoto: Literal["qualquer", "brasil", "nao"] = "qualquer"
     hora_rodada: str = "07:00"     # RF-VG-03
     peso_cobertura: float = 0.7
     peso_similaridade: float = 0.3

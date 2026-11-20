@@ -64,7 +64,8 @@ class TelaConfig:
         corpo = area_rolavel(pai)
         self._cabecalho(corpo, "Configurações", "Ajuste como o agente procura vagas e quando ele trabalha sozinho.")
 
-        buscas = carregar_config().buscas
+        config_vagas = carregar_config()
+        buscas = config_vagas.buscas
         bloco = cartao(corpo, padx=22, pady=18)
         bloco.pack(fill="x", padx=32, pady=(0, 10))
         topo = tk.Frame(bloco, bg=CARTAO)
@@ -96,7 +97,16 @@ class TelaConfig:
         central = carregar_configuracao()
         grade = self._grade(corpo, 2)
         sugestao = central.somente_sugestao
+        empresas = sorted({e.nome for b in buscas for e in b.empresas_alvo})
+        nomes_remoto = {"qualquer": "de qualquer lugar", "brasil": "só de empresas no Brasil", "nao": "nenhuma"}
         itens = [
+            ("Vagas remotas: " + nomes_remoto[config_vagas.remoto],
+             "Presencial e híbrido valem só em BH e região. Aqui você escolhe que vagas remotas quer receber.",
+             "Mudar", self._escolher_remoto, "secundario"),
+            ("Empresas que eu quero" + (f" · {len(empresas)}" if empresas else ""),
+             (", ".join(empresas[:4]) + ("…" if len(empresas) > 4 else "") + ". ") if empresas else
+             "Cadastre empresas onde você quer trabalhar: o agente olha a página de carreira delas em toda busca.",
+             "Adicionar empresa", self._adicionar_empresa, "secundario"),
             ("Busca automática todo dia", "O agente procura vagas sozinho todo dia de manhã, sem abrir janela. Se o PC "
              "estiver desligado no horário, a busca roda assim que ele ligar.",
              "Agendar", self._agendar_busca, "secundario"),
@@ -170,6 +180,27 @@ class TelaConfig:
                    bg=CARTAO).pack(side="left")
             Botao(linha, "Restaurar", lambda c=c: restaurar(c), "link").pack(side="right")
         Botao(janela, "Fechar", janela.destroy).pack(anchor="e", pady=(14, 0))
+
+    def _escolher_remoto(self) -> None:
+        escolha = escolher(self.raiz, "Vagas remotas", "Qual vaga remota o agente deve recomendar? A lista de vagas é "
+                           "refeita na hora com a sua escolha.",
+                           [("qualquer", "De qualquer lugar", "secundario"), ("brasil", "Só de empresas no Brasil", "primario"),
+                            ("nao", "Nenhuma", "secundario")])
+        if escolha:
+            self.executar("Vagas remotas", [["vagas", "config", "--remoto", escolha], ["vagas", "reavaliar"]])
+
+    def _adicionar_empresa(self) -> None:
+        r = perguntar(self.raiz, "Empresa que eu quero", "O agente olha a página de carreira dela em toda busca e "
+                      "avisa quando aparecer vaga que combina com você.",
+                      [("nome", "Nome da empresa", "texto", None, "", "Ex.: Localiza"),
+                       ("pagina", "Página de vagas (opcional)", "texto", None, "",
+                        "Ex.: https://localiza.gupy.io/ — copie da página \"Trabalhe conosco\" da empresa.")],
+                      botao="Adicionar")
+        if r and r["nome"].strip():
+            args = ["busca", "empresa", r["nome"].strip()]
+            if r["pagina"].strip():
+                args += ["--pagina", r["pagina"].strip()]
+            self.executar("Adicionar empresa", args)
 
     def _agendar_busca(self) -> None:
         r = perguntar(self.raiz, "Busca automática", "A busca roda sem abrir janela. Se o computador estiver desligado "

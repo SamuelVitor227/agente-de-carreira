@@ -61,6 +61,38 @@ class Inicio:
     numeros: dict[str, int] = field(default_factory=dict)
     ultima_busca: datetime | None = None
     busca_automatica: object | None = None  # operacao.agendada.Situacao: texto e se há problema
+    fontes_paradas: list[tuple[str, str, str]] = field(default_factory=list)  # (nome do adaptador, nome amigável, erro)
+    lembrete_linkedin: str | None = None    # RF-EV-22: faz tempo que o perfil não vem do LinkedIn
+    respostas_faltando: list[str] = field(default_factory=list)  # RF-EV-06: perguntas principais sem resposta
+
+
+NOMES_FONTES = {
+    "navegador:linkedin": "LinkedIn (automação)", "email:outlook-web": "Outlook (e-mail pelo navegador)",
+    "pagina:gupy-portal": "Portal da Gupy", "navegador:glassdoor": "Glassdoor",
+    "assistido:linkedin": "Candidatura simplificada do LinkedIn",
+}
+DIAS_LEMBRETE_LINKEDIN = 30
+
+
+def fontes_paradas(saude) -> list[tuple[str, str, str]]:
+    """Fontes de vagas paradas por erro ou por mudança no site (RF-EV-17), em linguagem simples."""
+    saida = []
+    for nome, adaptador in sorted(saude.adaptadores.items()):
+        if adaptador.status == "parado":
+            amigavel = NOMES_FONTES.get(nome) or (f"Alertas de e-mail: {nome.split(':', 1)[1]}" if nome.startswith("email:")
+                                                  else nome)
+            saida.append((nome, amigavel, (adaptador.ultimo_erro or "parou depois de falhas seguidas")[:160]))
+    return saida
+
+
+def lembrete_linkedin(sincronizado_em: datetime | None, agora: datetime | None = None) -> str | None:
+    if sincronizado_em is None:
+        return None
+    dias = ((agora or datetime.now(timezone.utc)) - _utc(sincronizado_em)).days
+    if dias < DIAS_LEMBRETE_LINKEDIN:
+        return None
+    return (f"Faz {dias} dias que o seu perfil não é atualizado com os dados do LinkedIn. Baixe o arquivo de novo "
+            "(o LinkedIn manda por e-mail) e o agente mostra o que mudou antes de guardar.")
 
 
 def _utc(momento: datetime) -> datetime:
@@ -144,9 +176,15 @@ def montar_inicio(dados=None) -> Inicio:
     nome = dados.perfil.contato.nome.split()[0] if dados.perfil and dados.perfil.contato.nome else None
     from ..operacao.agendada import situacao
 
-    return Inicio(nome=nome, passos=passos, proximo=proximo_passo(passos, numeros, dados.base.ultima_rodada),
+    estado_linkedin = carregar_estado()
+    from ..respostas import ESSENCIAIS, PERGUNTAS, carregar_respostas
+
+    banco = carregar_respostas()
+    respostas_faltando = [PERGUNTAS[c][0] for c in ESSENCIAIS if not banco.resposta(c)] if tem_perfil else []
+    return Inicio(respostas_faltando=respostas_faltando,nome=nome, passos=passos, proximo=proximo_passo(passos, numeros, dados.base.ultima_rodada),
                   numeros=numeros, ultima_busca=dados.base.ultima_rodada,
-                  busca_automatica=situacao(agendada, config.hora_rodada))
+                  busca_automatica=situacao(agendada, config.hora_rodada), fontes_paradas=fontes_paradas(dados.saude),
+                  lembrete_linkedin=lembrete_linkedin(estado_linkedin.sincronizado_em))
 
 
 # ---------------------------------------------------------------- listas

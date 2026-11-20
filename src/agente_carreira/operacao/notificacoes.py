@@ -85,13 +85,18 @@ def _salvar_arquivo(evento: str, titulo: str, corpo: str) -> Path:
 def notificar(
     evento: str, titulo: str, corpo: str, config: Configuracao, *,
     envio_email: Callable[..., None] = enviar_email, envio_push: Callable[..., None] = enviar_push,
-    ambiente: dict[str, str] | None = None,
+    ambiente: dict[str, str] | None = None, aviso_na_tela: Callable[[str, str], bool] | None = None,
 ) -> ResultadoNotificacao | None:
-    """Notifica pelo canal configurado; devolve None se o evento estiver desligado."""
+    """Notifica pelo canal configurado (e na tela do Windows); devolve None se o evento estiver desligado."""
     if not config.notificacao.eventos.get(evento, True):
         return None
     env = os.environ if ambiente is None else ambiente
     arquivo = _salvar_arquivo(evento, titulo, corpo)
+    if config.notificacao.aviso_na_tela:
+        if aviso_na_tela is None and not os.environ.get("PYTEST_CURRENT_TEST"):  # testes não enchem a tela de avisos
+            from .aviso_windows import avisar_na_tela as aviso_na_tela
+        if aviso_na_tela is not None:
+            aviso_na_tela(titulo, corpo)
     canal = config.notificacao.canal
     erro: str | None = None
     try:

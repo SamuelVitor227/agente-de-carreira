@@ -241,6 +241,46 @@ def ler_modelo(caminho: Path, modelo: type[M]) -> M:
     return obj
 
 
+def _modelos_em(tipo: Any) -> list[type[BaseModel]]:
+    """Os modelos dentro de uma anotação de tipo (X, X | None...)."""
+    import types
+    import typing
+
+    if isinstance(tipo, type) and issubclass(tipo, BaseModel):
+        return [tipo]
+    if typing.get_origin(tipo) in (typing.Union, types.UnionType):
+        return [m for arg in typing.get_args(tipo) for m in _modelos_em(arg)]
+    return []
+
+
+def preservar_desconhecidos(final: Any, bruto: Any, tipo: Any) -> Any:
+    """Põe de volta em `final` os campos do arquivo que este código não conhece.
+
+    Um processo com uma versão antiga do agente (ex.: o app aberto antes de uma atualização) lê o arquivo com o
+    modelo antigo e, ao gravar, apagaria as opções novas. Só campos de modelo voltam: uma chave tirada de propósito de
+    um dicionário livre (ex.: uma resposta apagada do banco) continua apagada.
+    """
+    import typing
+
+    modelos = _modelos_em(tipo)
+    if modelos and isinstance(final, dict) and isinstance(bruto, dict):
+        campos = modelos[0].model_fields
+        for chave, valor in bruto.items():
+            if chave not in campos:
+                final.setdefault(chave, valor)
+            elif chave in final:
+                final[chave] = preservar_desconhecidos(final[chave], valor, campos[chave].annotation)
+        return final
+    origem, argumentos = typing.get_origin(tipo), typing.get_args(tipo)
+    if origem is list and argumentos and _lista_com_ids(final) and _lista_com_ids(bruto):
+        por_id = {repr(x["id"]): x for x in bruto}
+        return [preservar_desconhecidos(x, por_id[repr(x["id"])], argumentos[0]) if repr(x["id"]) in por_id else x
+                for x in final]
+    if origem is dict and len(argumentos) == 2 and isinstance(final, dict) and isinstance(bruto, dict):
+        return {k: preservar_desconhecidos(v, bruto[k], argumentos[1]) if k in bruto else v for k, v in final.items()}
+    return final
+
+
 def gravar_modelo(caminho: Path, obj: BaseModel, *, preferir: Preferencia = "meu", antes_de_trocar=None) -> Path:
     """Grava `obj` mantendo o que outra tarefa gravou desde que este processo leu o arquivo.
 
@@ -251,19 +291,28 @@ def gravar_modelo(caminho: Path, obj: BaseModel, *, preferir: Preferencia = "meu
     base = _instantaneo(obj)
     with travado(caminho):
         final: BaseModel = obj
-        if base is not None and caminho.is_file():
+        bruto = None
+        if caminho.is_file():
             try:
-                disco = type(obj).model_validate_json(caminho.read_text(encoding="utf-8")).model_dump(mode="json")
+                texto_disco = caminho.read_text(encoding="utf-8")
+                bruto = json.loads(texto_disco)
             except (OSError, ValueError):
-                disco = None  # ilegível: fica a versão deste processo
-            if disco is not None and disco != base:
+                texto_disco = None  # ilegível: fica a versão deste processo
+            if base is not None and texto_disco is not None:
                 try:
-                    final = type(obj).model_validate(mesclar(base, meu, disco, preferir))
+                    disco = type(obj).model_validate_json(texto_disco).model_dump(mode="json")
                 except ValueError:
-                    final = obj
+                    disco = None
+                if disco is not None and disco != base:
+                    try:
+                        final = type(obj).model_validate(mesclar(base, meu, disco, preferir))
+                    except ValueError:
+                        final = obj
         if antes_de_trocar is not None:
             antes_de_trocar()
-        gravar_texto(caminho, final.model_dump_json(indent=2))
+        dados = preservar_desconhecidos(final.model_dump(mode="json"), bruto, type(final)) if bruto is not None else None
+        gravar_texto(caminho, json.dumps(dados, ensure_ascii=False, indent=2) if dados is not None
+                     else final.model_dump_json(indent=2))
     _guardar_instantaneo(obj, meu)
     return caminho
 

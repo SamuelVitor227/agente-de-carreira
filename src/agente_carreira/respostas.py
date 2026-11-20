@@ -100,6 +100,53 @@ def definir_resposta(banco: BancoRespostas, chave: str, resposta: str, valida_at
     banco.itens[chave] = RespostaPadrao(chave=chave, resposta=resposta.strip(), valida_ate=valida_ate)
 
 
+# As que quase todo formulário de estágio e júnior faz: sem elas, a candidatura para no meio (RF-EV-06).
+ESSENCIAIS = ("pretensao_estagio", "pretensao_clt", "disponibilidade_inicio", "carga_horaria", "ingles",
+              "conclusao_curso", "links")
+LONGAS = {"apresentacao_60s", "por_que_empresa", "maior_desafio", "referencias", "diversidade"}
+EXEMPLOS = {
+    "pretensao_estagio": "Ex.: R$ 1.200 a R$ 1.600 de bolsa",
+    "pretensao_clt": "Ex.: R$ 2.500 a R$ 3.200",
+    "pretensao_pj": "Deixe em branco se não aceita PJ",
+    "disponibilidade_inicio": "Ex.: imediata, ou a partir de 01/02/2027",
+    "mudar_cidade": "Ex.: não; ou sim, para São Paulo",
+    "viagens": "Ex.: eventualmente, dentro de MG",
+    "cnh": "Ex.: não tenho; ou B",
+    "diversidade": "Opcional. O agente nunca preenche isso nos sites sozinho.",
+    "por_que_empresa": "Um modelo que o agente adapta a cada vaga, sempre com a sua aprovação",
+}
+
+
+def sugestoes_do_perfil(perfil, config_vagas=None) -> dict[str, str]:
+    """Respostas que saem de fatos do seu perfil e das suas buscas, para você conferir e guardar (nada inventado)."""
+    sugestoes: dict[str, str] = {}
+    cursando = next((f for f in perfil.formacao if f.conclusao_prevista), None)
+    if cursando:
+        sugestoes["conclusao_curso"] = (f"{cursando.conclusao_prevista} ({cursando.curso}"
+                                        + (f", {cursando.instituicao}" if cursando.instituicao else "") + ")")
+    ingles = next((i for i in perfil.idiomas if "ingl" in _norm(i.idioma) or "english" in _norm(i.idioma)), None)
+    if ingles and ingles.nivel:
+        sugestoes["ingles"] = ingles.nivel[:1].upper() + ingles.nivel[1:]
+    links = [l for l in (perfil.links.linkedin, perfil.links.github, perfil.links.portfolio) if l]
+    if links:
+        sugestoes["links"] = " | ".join(links)
+    if perfil.resumo:
+        sugestoes["apresentacao_60s"] = perfil.resumo.strip()
+    buscas = list(getattr(config_vagas, "buscas", []) or [])
+    if buscas:
+        modelos = {m for b in buscas for m in b.modelos}
+        partes = []
+        if modelos & {"presencial", "hibrido"}:
+            partes.append("presencial ou híbrido em Belo Horizonte e região metropolitana")
+        if "remoto" in modelos or any(b.remoto_brasil for b in buscas):
+            partes.append("remoto")
+        if partes:
+            sugestoes["modelos_aceitos"] = (" ou ".join(partes))[:1].upper() + (" ou ".join(partes))[1:]
+        if any("estagio" in b.niveis for b in buscas):
+            sugestoes["carga_horaria"] = "Estágio: até 6 horas por dia (30 por semana), como prevê a Lei do Estágio"
+    return sugestoes
+
+
 def carregar_respostas() -> BancoRespostas:
     caminho = diretorio_dados() / ARQUIVO
     return ler_modelo(caminho, BancoRespostas)

@@ -639,11 +639,16 @@ def vagas_config(
     limiar_salvar: int | None = typer.Option(None, "--limiar-salvar"),
     dias_validade: int | None = typer.Option(None, "--dias-validade"),
     permitir_dominio: str | None = typer.Option(None, "--permitir-dominio", help="Domínio cujas páginas de vaga podem ser lidas."),
+    remoto: str | None = typer.Option(None, "--remoto", help="Vagas remotas: qualquer (de qualquer lugar), brasil "
+                                      "(só de empresas no Brasil) ou nao (nenhuma)."),
 ) -> None:
-    """Mostra ou ajusta limiares, validade das vagas e domínios permitidos."""
+    """Mostra ou ajusta limiares, validade das vagas, vagas remotas e domínios permitidos."""
     config = carregar_config()
+    if remoto is not None and remoto not in ("qualquer", "brasil", "nao"):
+        console.print("[red]Use --remoto qualquer, brasil ou nao.[/red]")
+        raise typer.Exit(1)
     for campo, valor in (("limiar_alerta", limiar_alerta), ("limiar_candidatar", limiar_candidatar),
-                         ("limiar_salvar", limiar_salvar), ("dias_validade", dias_validade)):
+                         ("limiar_salvar", limiar_salvar), ("dias_validade", dias_validade), ("remoto", remoto)):
         if valor is not None:
             setattr(config, campo, valor)
     if permitir_dominio and permitir_dominio not in config.dominios_permitidos:
@@ -651,7 +656,7 @@ def vagas_config(
     salvar_config(config)
     console.print(
         f"Limiar de alerta: {config.limiar_alerta} · candidatar: {config.limiar_candidatar} · salvar: {config.limiar_salvar}\n"
-        f"Validade: {config.dias_validade} dias · Rodada: {config.hora_rodada}\n"
+        f"Validade: {config.dias_validade} dias · Rodada: {config.hora_rodada} · Remotas: {config.remoto}\n"
         f"Domínios permitidos: {', '.join(config.dominios_permitidos)}\n"
         f"Só copiloto (termos proíbem leitura automatizada): {', '.join(config.dominios_copiloto)}\n"
         f"Pesos aprendidos: {len(config.preferencias)}"
@@ -729,6 +734,54 @@ def andamento_cmd() -> None:
     console.print(f"[{cor}]{escape(andamento.descrever(estado))}[/{cor}]")
     for linha in andamento.ultimas_linhas(15):
         console.print(f"[dim]{escape(linha)}[/dim]")
+
+
+def caminho_cv_da_vaga(vaga_id: str, idioma: str = "pt") -> Path:
+    return diretorio_dados() / "saidas" / f"cv-vaga-{vaga_id}-{idioma}.pdf"
+
+
+@vagas_app.command("curriculo")
+def vagas_curriculo(
+    id_: str = typer.Argument(..., metavar="ID"),
+    idioma: str = typer.Option("pt", "--idioma", help="pt ou en."),
+) -> None:
+    """Gera o currículo sob medida desta vaga (PDF) e mostra o que mudou em relação ao currículo-base (RF-EV-09)."""
+    from .analise.exportar import exportar_pdf
+    from .analise.sob_medida import gerar_sob_medida
+    from .cli_comum import _bloquear_sem_lastro
+    from .confirmacao import pendencias_na_variante
+    from .vagas import Vaga
+
+    vaga = _vaga(carregar_base(), id_)
+    perfil = _perfil()
+    foco = vaga.busca if vaga.busca in SINONIMOS_POR_FOCO else next(iter(SINONIMOS_POR_FOCO))
+    nivel = vaga.nivel if vaga.nivel in ("estagio", "trainee", "junior") else "estagio"
+    alvo = Vaga(titulo=vaga.titulo, empresa=vaga.empresa, foco=foco, url=vaga.link,
+                descricao=vaga.descricao or vaga.titulo)
+    try:
+        resultado = gerar_sob_medida(perfil, alvo, foco=foco, idioma=idioma, nivel=nivel)
+    except ValueError as erro:
+        console.print(f"[red]{escape(str(erro))}[/red]")
+        raise typer.Exit(1)
+    console.print(f"[bold]Currículo sob medida para:[/bold] {escape(vaga.titulo)}"
+                  + (f" — {escape(vaga.empresa)}" if vaga.empresa else ""))
+    if not vaga.descricao:
+        console.print("[yellow]A descrição da vaga ainda não foi lida: o ajuste usou só o título.[/yellow]")
+    console.print("\n[bold]O que mudou em relação ao currículo-base:[/bold]")
+    for mudanca in resultado.mudancas or ["nada de ordem: o currículo-base já estava alinhado a esta vaga"]:
+        console.print(f"  • {escape(mudanca)}")
+    # As tecnologias reconhecidas na nota (os termos soltos do anúncio incluem "café", "almoço"...).
+    atendidos = vaga.aderencia.atendidos if vaga.aderencia else []
+    lacunas = vaga.aderencia.lacunas if vaga.aderencia else []
+    console.print(f"\n[green]Tecnologias da vaga que você tem ({len(atendidos)}):[/green] " + escape(", ".join(atendidos) or "—"))
+    console.print(f"[red]Que ela pede e não estão no seu perfil ({len(lacunas)}):[/red] " + escape(", ".join(lacunas) or "—"))
+    pendencias = pendencias_na_variante(resultado.variante)
+    if pendencias:
+        console.print("[red]O PDF não foi gerado: há frases [A CONFIRMAR] no seu perfil. Confirme em 'agente confirmar'.[/red]")
+        raise typer.Exit(1)
+    _bloquear_sem_lastro(resultado.variante, perfil)
+    caminho, paginas = exportar_pdf(resultado.variante, caminho_cv_da_vaga(vaga.id, idioma))
+    console.print(f"\n[green]PDF pronto[/green] ({paginas} pág.): {caminho}")
 
 
 @vagas_app.command("conferir")

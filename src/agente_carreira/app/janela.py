@@ -12,6 +12,7 @@ import threading
 import time
 import tkinter as tk
 import webbrowser
+from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from typing import Callable
 
@@ -141,6 +142,26 @@ class App(TelaInicio, TelaVagas, TelaCandidaturas, TelaPerfil, TelaLinkedIn, Tel
         self.pagina_atual = "inicio"
         self.mostrar("inicio")
         self.raiz.after(400, self._atualizar_faixa)
+        self._versao_codigo = self._assinatura_codigo()
+        self.raiz.after(60_000, self._conferir_atualizacao)
+
+    @staticmethod
+    def _assinatura_codigo() -> float:
+        """Data da última mudança no código do agente (para saber se ele foi atualizado com o app aberto)."""
+        pasta = Path(__file__).resolve().parents[1]
+        try:
+            return max(p.stat().st_mtime for p in pasta.rglob("*.py"))
+        except (OSError, ValueError):
+            return 0.0
+
+    def _conferir_atualizacao(self) -> None:
+        """Código novo com o app aberto: este processo ainda roda o antigo. Pede para abrir o app de novo."""
+        if not self.raiz.winfo_exists():
+            return
+        if self._assinatura_codigo() > self._versao_codigo:
+            self.avisar("O agente foi atualizado. Feche e abra o app de novo para usar a versão nova.", segundos=3600)
+            return
+        self.raiz.after(60_000, self._conferir_atualizacao)
 
     def avisar(self, texto: str, segundos: float = 4.0) -> None:
         """Confirmação curta no topo (ex.: "Vaga salva ✓"), que some sozinha."""

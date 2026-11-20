@@ -208,6 +208,7 @@ class TelaVagas:
         botoes.pack(side="bottom", fill="x", pady=(10, 0))
         Botao(botoes, "Quero me candidatar", lambda: self._candidatar(vaga.id), "primario").pack(side="left")
         Botao(botoes, "Abrir no site", lambda: self._abrir_link(vaga.link)).pack(side="left", padx=6)
+        Botao(botoes, "Ver currículo desta vaga", lambda: self._ver_curriculo(vaga.id)).pack(side="left", padx=(0, 6))
         if vaga.status != "salva":
             Botao(botoes, "Salvar para depois", lambda: self._salvar_vagas([vaga.id])).pack(side="left")
         Botao(botoes, "Não tenho interesse", lambda: self._sem_interesse(vaga.id), "perigo").pack(side="left", padx=6)
@@ -266,6 +267,16 @@ class TelaVagas:
                                "o agente preenche seus dados e anexa o currículo; você confere, clica em ENVIAR e fecha "
                                f"o navegador para ir para a próxima.{corte}\n\nComeçar?", parent=self.raiz):
             self.executar(f"Candidatar às {len(escolhidas)} vagas", [["candidatar", i, "--direto"] for i in escolhidas])
+
+    def _ver_curriculo(self, vaga_id: str) -> None:
+        """RF-EV-09: o currículo sob medida desta vaga, para conferir antes de se candidatar."""
+        from ...cli_vagas import caminho_cv_da_vaga
+
+        def abrir() -> None:
+            pdf = caminho_cv_da_vaga(vaga_id)
+            if pdf.is_file() and hasattr(os, "startfile"):
+                os.startfile(pdf)
+        self.executar("Currículo desta vaga", ["vagas", "curriculo", vaga_id], depois=abrir)
 
     def _abrir_link(self, link: str | None) -> None:
         if link:

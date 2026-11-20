@@ -828,3 +828,50 @@ def test_texto_de_vaga_fechada_no_anuncio():
 
     for texto in ("Não aceita mais candidaturas", "This job has expired", "Esta vaga expirou", "Candidaturas encerradas"):
         assert PADRAO_ENCERRADA.search(texto), texto
+
+
+# ---------------------------------------------------------------- perguntas do formulário (RF-EV-07 e RF-EV-08)
+
+FORM_PERGUNTAS = """
+<form onsubmit="window.enviado = true; return false">
+  <div><p>Qual a sua pretensão salarial (bolsa) para o estágio?</p><input id="pretensao" type="text"></div>
+  <div><label for="ingles">Qual o seu nível de inglês?</label>
+    <select id="ingles"><option>Selecione</option><option>Básico</option><option>Intermediário</option></select></div>
+  <div><label for="genero">Com qual gênero você se identifica?</label><input id="genero"></div>
+  <div><label for="carta">Carta de apresentação</label><textarea id="carta"></textarea></div>
+  <div><label for="viagem">Tem disponibilidade para viagens?</label><input id="viagem"></div>
+  <div><label for="ja">Por que você quer trabalhar aqui?</label><input id="ja" value="Porque sim"></div>
+  <input type="search" id="busca" placeholder="Buscar vagas">
+  <button type="submit">Enviar candidatura</button>
+</form>"""
+
+
+def test_responde_perguntas_so_com_respostas_aprovadas(navegador):
+    from agente_carreira.preenchimento_auto import responder_perguntas
+
+    respostas = {"pretensao": "R$ 1.500", "ingles": "Básico"}
+
+    def responder(rotulo: str) -> str | None:
+        if "pretens" in rotulo.lower():
+            return respostas["pretensao"]
+        if "ingl" in rotulo.lower():
+            return respostas["ingles"]
+        if "gênero" in rotulo.lower():
+            return "não deveria ser usado"
+        return None
+
+    pagina = navegador.new_page()
+    pagina.set_content(FORM_PERGUNTAS)
+    ja = set()
+    feitos = responder_perguntas(pagina, responder, "Olá! Sou estudante de Sistemas de Informação...", ja)
+    valor = lambda i: pagina.locator(f"#{i}").input_value()
+    assert valor("pretensao") == "R$ 1.500"
+    assert pagina.locator("#ingles").evaluate("e => e.options[e.selectedIndex].text") == "Básico"
+    assert valor("carta").startswith("Olá! Sou estudante")      # a mensagem da vaga vai no campo de apresentação
+    assert valor("genero") == ""                                 # diversidade é sua
+    assert valor("viagem") == ""                                 # sem resposta aprovada: fica para você
+    assert valor("ja") == "Porque sim"                           # nunca sobrescreve
+    assert pagina.evaluate("window.enviado") is None             # nunca envia
+    assert len(feitos) == 3
+    assert responder_perguntas(pagina, responder, "x", ja) == []  # não repete
+    pagina.close()

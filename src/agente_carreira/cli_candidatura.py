@@ -186,24 +186,32 @@ def _esperar_fechar(sessao) -> None:
         time.sleep(1.5)
 
 
-def _candidatura_no_site(link: str, cv: Path | None, perfil) -> None:
-    """Abre a vaga no site (Gupy, Vagas, InfoJobs...) e preenche sozinho os dados básicos e o currículo até você fechar."""
+def _candidatura_no_site(link: str, cv: Path | None, perfil, contrato: str | None = None,
+                         mensagem: str | None = None) -> None:
+    """Abre a vaga no site (Gupy, Vagas, InfoJobs...) e preenche sozinho os dados básicos, o currículo, as perguntas
+    com resposta aprovada e a mensagem de apresentação, até você fechar."""
+    from .linkedin.automatico import responder_com_perfil
     from .navegador import SessaoNavegador
     from .preenchimento_auto import acompanhar, campo_curriculo, campos_basicos, dominio_raiz
+    from .respostas import carregar_respostas
 
     campos = campos_basicos(perfil) + ([campo_curriculo(cv)] if cv and cv.is_file() else [])
+    responder = responder_com_perfil(perfil, carregar_respostas(), contrato)
     with SessaoNavegador(uso="a candidatura no site da vaga") as sessao:
         sessao.pagina.goto(link, wait_until="domcontentloaded")
         console.print(Panel(
             "A vaga abriu no navegador do agente. Entre na conta se o site pedir (login é seu) e clique em "
-            "'Candidatar-se'.\nEm cada formulário, o agente preenche nome, e-mail, telefone, cidade, links e anexa o "
-            "currículo sob medida, só em campos vazios.\nConfira tudo, responda o que faltar e clique em ENVIAR você "
-            "mesmo. Depois feche o navegador.", title="Candidatura no site", border_style="magenta"))
+            "'Candidatar-se'.\nEm cada formulário, o agente preenche nome, e-mail, telefone, cidade, links, anexa o "
+            "currículo sob medida e responde as perguntas que você já respondeu em \"Respostas prontas\" (pretensão, "
+            "disponibilidade, inglês...), só em campos vazios. No campo de apresentação vai a mensagem da vaga.\n"
+            "Perguntas de diversidade são suas. Confira tudo, responda o que faltar e clique em ENVIAR você mesmo. "
+            "Depois feche o navegador.", title="Candidatura no site", border_style="magenta"))
 
         def avisar(endereco: str, rotulos: list[str]) -> None:
             console.print(f"[green]Preenchido:[/green] {escape(', '.join(rotulos))}")
 
-        acompanhar(sessao.visao(), [dominio_raiz(link)], campos, ao_preencher=avisar)
+        acompanhar(sessao.visao(), [dominio_raiz(link)], campos, ao_preencher=avisar, responder=responder,
+                   mensagem=mensagem)
 
 
 def _preencher_linkedin(link: str, central, cv: Path | None, perfil, contrato: str | None,
@@ -410,7 +418,7 @@ def candidatar(
                 captura = _preencher_linkedin(vaga.link, central, cv, perfil, vaga.contrato, esperar_fechar=True)
                 modo = "assistido"
             else:
-                _candidatura_no_site(vaga.link, cv, perfil)
+                _candidatura_no_site(vaga.link, cv, perfil, vaga.contrato, kit.mensagem)
                 modo = "assistido"
         except NavegadorOcupado as erro:
             _sair(f"{erro}")

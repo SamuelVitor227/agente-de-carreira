@@ -86,6 +86,41 @@ class TelaInicio:
             for w in (c, numero, legenda):
                 w.bind("<Button-1>", lambda _e, d=destino: self.mostrar(d))
 
+        if inicio.fontes_paradas:  # RF-EV-17: um site mudou ou deu erro e a fonte parou
+            aviso = tk.Frame(corpo, bg=ATENCAO_CLARO, highlightthickness=1, highlightbackground="#f5d9a8", padx=22, pady=14)
+            aviso.pack(fill="x", padx=32, pady=(10, 0))
+            rotulo(aviso, "⚠ Uma fonte de vagas parou" if len(inicio.fontes_paradas) == 1 else
+                   f"⚠ {len(inicio.fontes_paradas)} fontes de vagas pararam", F_NEGRITO, ATENCAO, bg=ATENCAO_CLARO).pack(anchor="w")
+            rotulo(aviso, "Normalmente é porque o site mudou de layout ou pediu login. Confira o site e reative; se "
+                   "parar de novo, o agente precisa de ajuste.", F_PEQUENA, SUAVE, bg=ATENCAO_CLARO,
+                   wraplength=760).pack(anchor="w", pady=(0, 6))
+            for nome, amigavel, erro in inicio.fontes_paradas:
+                linha = tk.Frame(aviso, bg=ATENCAO_CLARO)
+                linha.pack(fill="x", pady=2)
+                rotulo(linha, f"• {amigavel}: {erro}", F_NORMAL, TEXTO, bg=ATENCAO_CLARO, wraplength=600).pack(side="left")
+                Botao(linha, "Reativar", lambda n=nome: self.executar("Reativar fonte", ["saude", "reativar", n]),
+                      "link").pack(side="right")
+            Botao(aviso, "Ver o problema", lambda: self.executar("Fontes de vagas", ["saude"]), "link").pack(anchor="w")
+
+        if inicio.respostas_faltando:  # RF-EV-06
+            bloco = tk.Frame(corpo, bg=DESTAQUE_CLARO, highlightthickness=1, highlightbackground="#bfe0cf", padx=22, pady=14)
+            bloco.pack(fill="x", padx=32, pady=(10, 0))
+            textos = tk.Frame(bloco, bg=DESTAQUE_CLARO)
+            textos.pack(side="left", fill="x", expand=True)
+            rotulo(textos, f"Responda {len(inicio.respostas_faltando)} perguntas que os formulários sempre fazem",
+                   F_NEGRITO, TEXTO, bg=DESTAQUE_CLARO).pack(anchor="w")
+            rotulo(textos, "Sem elas, o agente para no meio de cada candidatura: " + ", ".join(
+                p.lower() for p in inicio.respostas_faltando[:4]) + ("…" if len(inicio.respostas_faltando) > 4 else "")
+                + (" " if len(inicio.respostas_faltando) > 4 else ". ") + "Leva 2 minutos.", F_PEQUENA, SUAVE,
+                bg=DESTAQUE_CLARO, wraplength=620).pack(anchor="w")
+            Botao(bloco, "Responder agora", self._respostas, "primario").pack(side="right")
+
+        if inicio.lembrete_linkedin:  # RF-EV-22
+            lembrete = cartao(corpo, padx=22, pady=14)
+            lembrete.pack(fill="x", padx=32, pady=(10, 0))
+            rotulo(lembrete, inicio.lembrete_linkedin, F_NORMAL, TEXTO, bg=CARTAO, wraplength=640).pack(side="left")
+            Botao(lembrete, "Atualizar pelo LinkedIn", lambda: self.acao("conectar_linkedin")).pack(side="right")
+
         if not all(passo.feito for passo in inicio.passos):
             bloco = cartao(corpo, padx=22, pady=18)
             bloco.pack(fill="x", padx=32, pady=(10, 8))
