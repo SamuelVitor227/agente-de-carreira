@@ -208,3 +208,61 @@ def test_dados_dos_graficos_da_tela_relatorios():
     a.mudar_status(Etapa.ENTREVISTA_RH)
     funil = dict(estado.funil_das_candidaturas(Candidaturas(itens=[a, b])))
     assert funil["Enviadas"] == 2 and funil["Em análise"] == 1 and funil["Entrevista RH"] == 1 and funil["Proposta"] == 0
+
+
+# ---------------------------------------------------------------- RF-EV-21
+
+def test_simulado_de_entrevista_com_dica_e_resposta_guardada():
+    from agente_carreira.candidatar.kit import VagaDoKit
+    from agente_carreira.models import Projeto
+    from agente_carreira.preparacao import carregar_treino, guardar_resposta_treino, perguntas_provaveis
+    from agente_carreira.respostas import carregar_respostas
+
+    perfil = _perfil()
+    perfil.competencias_tecnicas = ["C#", ".NET"]
+    perfil.projetos = [Projeto(nome="SistemaPedidos", descricao="API de pedidos em C# e .NET", tecnologias=["C#", ".NET"])]
+    vaga = VagaDoKit(titulo="Desenvolvedor .NET Júnior", empresa="Omega", descricao="Requisitos: C#, Docker.",
+                     requisitos_obrigatorios=["C#", "Docker"])
+    perguntas = perguntas_provaveis(perfil, vaga)
+    textos = [p.texto for p in perguntas]
+    assert any("C#" in t for t in textos) and any("Docker" in t for t in textos)
+    assert next(p for p in perguntas if "C#" in p.texto).dica.startswith("No seu perfil")
+    assert "sem inventar" in next(p for p in perguntas if "projeto em que você usou Docker" in p.texto).dica
+    por_que = next(p for p in perguntas if p.chave == "por_que_empresa")
+    assert "Omega" in por_que.texto
+    guardar_resposta_treino(por_que, "Porque a Omega trabalha com .NET e quero crescer em back-end.")
+    assert carregar_treino().resposta("Por que você quer trabalhar na Beta?")  # vale para a próxima empresa
+    assert carregar_respostas().resposta("por_que_empresa").startswith("Porque a Omega")
+
+
+# ---------------------------------------------------------------- RF-EV-11
+
+def test_alerta_so_com_rastreamento_vira_vaga_sem_abrir_descadastro():
+    from email.message import EmailMessage
+
+    from agente_carreira.radar.coleta import destino_do_rastreamento, so_links_de_rastreamento, vagas_por_rastreamento
+
+    msg = EmailMessage()
+    msg["From"] = "Vagas.com <nao-responda@vagas.com.br>"
+    msg["Subject"] = "Nova vaga compatível com você"
+    msg.set_content(
+        '<p><a href="https://tracking.recomendacao.vagas.com.br/c/1">Estagiário de Desenvolvimento Web</a></p>'
+        '<p><a href="https://tracking.recomendacao.vagas.com.br/c/2">Analista de Suporte Júnior</a></p>'
+        '<p><a href="https://tracking.recomendacao.vagas.com.br/c/9">Descadastrar deste alerta</a></p>'
+        '<p><a href="https://tracking.recomendacao.vagas.com.br/c/8">Ver mais</a></p>', subtype="html")
+    assert so_links_de_rastreamento(msg)
+    abertos = []
+    destinos = {"https://tracking.recomendacao.vagas.com.br/c/1": "https://www.vagas.com.br/vagas/v2615001/estagiario-web?utm=x",
+                "https://tracking.recomendacao.vagas.com.br/c/2": "https://www.vagas.com.br/vagas/v2615002/analista"}
+    vagas = vagas_por_rastreamento(msg, destino=lambda url: abertos.append(url) or destinos.get(url))
+    assert [(v.titulo, v.link) for v in vagas] == [
+        ("Estagiário de Desenvolvimento Web", "https://www.vagas.com.br/vagas/v2615001"),
+        ("Analista de Suporte Júnior", "https://www.vagas.com.br/vagas/v2615002")]
+    assert not any(url.endswith("/9") or url.endswith("/8") for url in abertos)  # descadastro e "ver mais" nunca
+
+    saltos = {"https://t.co/a": (302, "https://click.x.com/b"), "https://click.x.com/b": (301, "/vagas/v123/dev"),
+              "https://u.x.com/z": (302, "https://www.vagas.com.br/preferencias/descadastrar")}
+    assert destino_do_rastreamento("https://t.co/a", cabecalho=lambda u: saltos.get(u, (200, None))) is None
+    saltos["https://click.x.com/b"] = (301, "https://www.vagas.com.br/vagas/v123/dev")
+    assert destino_do_rastreamento("https://t.co/a", cabecalho=lambda u: saltos[u]) == "https://www.vagas.com.br/vagas/v123/dev"
+    assert destino_do_rastreamento("https://u.x.com/z", cabecalho=lambda u: saltos.get(u, (200, None))) is None

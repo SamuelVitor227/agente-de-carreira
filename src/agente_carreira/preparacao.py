@@ -9,6 +9,11 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+
+from pydantic import BaseModel, Field
 
 from .candidatar.kit import VagaDoKit
 from .models import PerfilMestre
@@ -74,6 +79,53 @@ def _resumo_empresa(vaga: VagaDoKit, anotacoes: str | None) -> list[str]:
     return linhas
 
 
+@dataclass
+class PerguntaTreino:
+    """Uma pergunta provável da entrevista, com a dica tirada do seu perfil (RF-EV-21)."""
+    texto: str
+    dica: str
+    chave: str | None = None  # pergunta do banco de respostas (Anexo C), se for uma delas
+
+
+def _requisitos(vaga: VagaDoKit) -> tuple[list[str], list[str]]:
+    obrigatorios, desejaveis = vaga.requisitos_obrigatorios, vaga.requisitos_desejaveis
+    if not obrigatorios and not desejaveis:
+        obrigatorios, desejaveis = secoes_requisitos(vaga.descricao)
+    if not obrigatorios and not desejaveis:
+        obrigatorios = tecnologias_em(f"{vaga.titulo}\n{vaga.descricao}")
+    return list(obrigatorios), list(desejaveis)
+
+
+def perguntas_provaveis(perfil: PerfilMestre, vaga: VagaDoKit) -> list[PerguntaTreino]:
+    """As perguntas que provavelmente vão aparecer, cada uma com o que o seu perfil tem para responder."""
+    obrigatorios, desejaveis = _requisitos(vaga)
+    perguntas: list[PerguntaTreino] = []
+    for tec in list(dict.fromkeys(t for r in obrigatorios for t in tecnologias_em(r)))[:5]:
+        achadas = evidencias(perfil, tec)
+        perguntas.append(PerguntaTreino(
+            f"Conte sobre um projeto em que você usou {tec}. O que fez, que problema resolveu e o que aprendeu?",
+            ("No seu perfil: " + "; ".join(achadas[:2])) if achadas else
+            f"Não há {tec} no seu perfil: diga com honestidade o que sabe e como aprenderia (sem inventar)."))
+    resumo = (perfil.resumo or perfil.objetivo or "").strip()
+    perguntas += [
+        PerguntaTreino("Fale sobre você em 60 segundos.",
+                       "Comece pelo curso e pelo que você quer; feche com um projeto seu. " + (f"Seu resumo: {resumo[:200]}" if resumo else ""),
+                       "apresentacao_60s"),
+        PerguntaTreino("Conte uma situação difícil num trabalho em equipe e como resolveu.",
+                       "Use o formato situação, tarefa, ação e resultado (STAR), com um caso real."),
+        PerguntaTreino("Qual foi o maior desafio técnico que você enfrentou e como resolveu?",
+                       "Escolha um problema de um projeto seu, o que você tentou e o resultado (com número, se tiver).",
+                       "maior_desafio"),
+        PerguntaTreino(f"Por que você quer trabalhar{f' na {vaga.empresa}' if vaga.empresa else ' aqui'}?",
+                       "Junte algo concreto da empresa ou da vaga com o que você quer aprender.", "por_que_empresa"),
+    ]
+    sem_evidencia = [r for r in obrigatorios if not evidencias(perfil, r)]
+    perguntas += [PerguntaTreino(f"Você não citou {r}. Como faria para aprender rápido?",
+                                 "Mostre um caso em que aprendeu algo novo sozinho e em quanto tempo.")
+                  for r in sem_evidencia[:3]]
+    return perguntas
+
+
 def material(perfil: PerfilMestre, vaga: VagaDoKit, banco: BancoRespostas | None = None, anotacoes: str | None = None) -> str:
     obrigatorios = vaga.requisitos_obrigatorios
     desejaveis = vaga.requisitos_desejaveis
@@ -115,3 +167,73 @@ def material(perfil: PerfilMestre, vaga: VagaDoKit, banco: BancoRespostas | None
     linhas += ["", "## Perguntas para você fazer", ""]
     linhas += [f"- {p}" for p in PERGUNTAS_PARA_FAZER]
     return "\n".join(linhas) + "\n"
+
+
+# ---------------------------------------------------------------- simulado de entrevista (RF-EV-21)
+
+ARQUIVO_TREINO = "entrevista-respostas.json"
+
+
+class RespostaTreino(BaseModel):
+    pergunta: str
+    resposta: str
+    guardada_em: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class TreinoEntrevista(BaseModel):
+    """As respostas que você treinou e guardou, por pergunta (valem para as próximas entrevistas)."""
+    itens: dict[str, RespostaTreino] = Field(default_factory=dict)
+
+    def resposta(self, pergunta: str) -> str | None:
+        item = self.itens.get(_chave_treino(pergunta))
+        return item.resposta if item else None
+
+
+def _chave_treino(pergunta: str) -> str:
+    # "Por que você quer trabalhar na Omega?" e "... na Beta?" são a mesma pergunta.
+    return re.sub(r"\s+(na|no|em)\s+[^?]+\?$", "?", _norm(pergunta)).strip()
+
+
+def _caminho_treino() -> Path:
+    from .storage import diretorio_dados
+
+    return diretorio_dados() / ARQUIVO_TREINO
+
+
+def carregar_treino() -> TreinoEntrevista:
+    from .arquivos import ler_modelo
+
+    return ler_modelo(_caminho_treino(), TreinoEntrevista)
+
+
+def guardar_resposta_treino(pergunta: PerguntaTreino, resposta: str) -> None:
+    """Guarda a sua resposta; as do Anexo C (apresentação, maior desafio, por que esta empresa) vão também para o
+    banco de respostas prontas, que preenche os formulários (guardar aqui é a sua aprovação)."""
+    from .arquivos import gravar_modelo
+    from .respostas import carregar_respostas, definir_resposta, salvar_respostas
+
+    resposta = resposta.strip()
+    if not resposta:
+        return
+    treino = carregar_treino()
+    treino.itens[_chave_treino(pergunta.texto)] = RespostaTreino(pergunta=pergunta.texto, resposta=resposta)
+    gravar_modelo(_caminho_treino(), treino)
+    if pergunta.chave:
+        banco = carregar_respostas()
+        definir_resposta(banco, pergunta.chave, resposta)
+        salvar_respostas(banco)
+
+
+def vaga_da_candidatura(candidatura) -> VagaDoKit | None:
+    """A vaga de uma candidatura: do kit guardado, ou da base de vagas."""
+    from .candidatar.kit import Kit, vaga_do_kit
+    from .radar.modelos import carregar_base
+
+    if candidatura.kit_dir and (Path(candidatura.kit_dir) / "kit.json").is_file():
+        return Kit.model_validate_json((Path(candidatura.kit_dir) / "kit.json").read_text(encoding="utf-8")).vaga
+    if candidatura.vaga_id:
+        try:
+            return vaga_do_kit(carregar_base().buscar(candidatura.vaga_id))
+        except ValueError:
+            return None
+    return None

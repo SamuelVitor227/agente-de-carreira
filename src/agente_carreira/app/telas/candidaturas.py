@@ -56,6 +56,69 @@ from ..janela_execucao import JanelaExecucao  # noqa: F401
 class TelaCandidaturas:
     # ---------------------------------------------------------------- candidaturas
 
+    def _treinar_entrevista(self, candidatura) -> None:
+        """RF-EV-21: uma pergunta provável por vez, com a dica do seu perfil; as melhores respostas ficam guardadas."""
+        from ...preparacao import carregar_treino, guardar_resposta_treino, perguntas_provaveis, vaga_da_candidatura
+        from ...respostas import carregar_respostas
+        from ...storage import carregar_perfil
+
+        vaga = vaga_da_candidatura(candidatura)
+        if vaga is None:
+            messagebox.showinfo(NOME_APP, "Não achei a vaga desta candidatura para montar as perguntas.", parent=self.raiz)
+            return
+        perguntas = perguntas_provaveis(carregar_perfil(), vaga)
+        treino, banco = carregar_treino(), carregar_respostas()
+        janela = tk.Toplevel(self.raiz)
+        janela.title(f"Treinar entrevista — {NOME_APP}")
+        janela.configure(bg=FUNDO, padx=24, pady=18)
+        janela.geometry("760x560")
+        janela.transient(self.raiz)
+        rotulo(janela, f"Treino para: {vaga.titulo}" + (f" — {vaga.empresa}" if vaga.empresa else ""), F_NEGRITO,
+               SUAVE, wraplength=700).pack(anchor="w")
+        contador = rotulo(janela, "", F_PEQUENA, SUAVE)
+        contador.pack(anchor="w", pady=(10, 0))
+        pergunta_rotulo = rotulo(janela, "", F_SUBTITULO, wraplength=700)
+        pergunta_rotulo.pack(anchor="w", pady=(2, 4))
+        dica = rotulo(janela, "", F_NORMAL, DESTAQUE, wraplength=700)
+        dica.pack(anchor="w")
+        rotulo(janela, "Responda em voz alta primeiro (1 a 2 minutos). Depois escreva a versão que você gostou:",
+               F_PEQUENA, SUAVE).pack(anchor="w", pady=(10, 2))
+        caixa = tk.Text(janela, height=9, font=F_NORMAL, wrap="word", relief="solid", bd=1)
+        caixa.pack(fill="both", expand=True)
+        situacao = rotulo(janela, "", F_PEQUENA, DESTAQUE)
+        situacao.pack(anchor="w", pady=(4, 0))
+        botoes = tk.Frame(janela, bg=FUNDO)
+        botoes.pack(fill="x", pady=(10, 0))
+        atual = {"i": 0}
+
+        def mostrar() -> None:
+            p = perguntas[atual["i"]]
+            contador.configure(text=f"Pergunta {atual['i'] + 1} de {len(perguntas)}")
+            pergunta_rotulo.configure(text=p.texto)
+            dica.configure(text=p.dica)
+            caixa.delete("1.0", "end")
+            caixa.insert("1.0", treino.resposta(p.texto) or (banco.resposta(p.chave) if p.chave else None) or "")
+            situacao.configure(text="")
+
+        def ir(passo: int) -> None:
+            atual["i"] = max(0, min(len(perguntas) - 1, atual["i"] + passo))
+            mostrar()
+
+        def guardar() -> None:
+            p, texto = perguntas[atual["i"]], caixa.get("1.0", "end").strip()
+            if not texto:
+                situacao.configure(text="Escreva a resposta antes de guardar.")
+                return
+            guardar_resposta_treino(p, texto)
+            treino.itens.update(carregar_treino().itens)
+            situacao.configure(text="Guardada ✓" + (" Também vai para as Respostas prontas dos formulários." if p.chave else ""))
+
+        Botao(botoes, "← Anterior", lambda: ir(-1)).pack(side="left")
+        Botao(botoes, "Próxima →", lambda: ir(1)).pack(side="left", padx=8)
+        Botao(botoes, "Guardar esta resposta", guardar, "primario").pack(side="left")
+        Botao(botoes, "Fechar", janela.destroy, "link").pack(side="right")
+        mostrar()
+
     def _lembrete_feito(self, lembrete_id: str) -> None:
         from ...funil import marcar_lembrete_feito
 
@@ -176,5 +239,6 @@ class TelaCandidaturas:
         barra.pack(fill="x", padx=32, pady=14)
         Botao(barra, "O que aconteceu?", aconteceu, "primario").pack(side="left")
         Botao(barra, "Preparar para entrevista", preparar).pack(side="left", padx=6)
-        Botao(barra, "Escrever follow-up", followup).pack(side="left")
+        Botao(barra, "Treinar entrevista", lambda: (c := escolhida()) and self._treinar_entrevista(c)).pack(side="left")
+        Botao(barra, "Escrever follow-up", followup).pack(side="left", padx=6)
         tabela.bind("<Double-Button-1>", lambda _e: aconteceu())

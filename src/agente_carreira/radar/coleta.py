@@ -18,10 +18,11 @@ from datetime import date
 from email import policy
 from email.message import Message
 from email.utils import parseaddr, parsedate_to_datetime
+from html.parser import HTMLParser
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin, urlparse
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
 from urllib.robotparser import RobotFileParser
 
 from .extracao import analisar_html, campos_de_jobposting, jobpostings
@@ -258,6 +259,99 @@ def vagas_de_email(msg: Message) -> list[VagaBruta]:
                     titulo=titulo, empresa=empresa, local=local, link=link,
                     fonte_tipo="email", fonte_origem=f"{plataforma}-alerta", publicada_em=data,
                 ))
+    return vagas
+
+
+# ---------------------------------------------------------------- alertas só com links de rastreamento (RF-EV-11)
+
+# Link que nunca é aberto: descadastro, preferências, login, ajuda... (só os links de vaga são seguidos).
+NAO_ABRIR = re.compile(r"descadastr|unsubscri|cancel|remov|prefer[eê]nc|opt-?out|privacidade|pol[ií]tica|termos"
+                       r"|ajuda|help|central|login|entrar|senha|perfil|configura|app\b|baixe|download"
+                       r"|ver mais|veja mais|ver todas|saiba mais|clique aqui|acesse", re.I)
+LIMITE_RASTREAMENTO = 10
+
+
+class _Ancoras(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.pares: list[tuple[str, str]] = []
+        self._href: str | None = None
+        self._texto: list[str] = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "a":
+            self._href, self._texto = dict(attrs).get("href"), []
+
+    def handle_data(self, data):
+        if self._href is not None:
+            self._texto.append(data)
+
+    def handle_endtag(self, tag):
+        if tag == "a" and self._href:
+            self.pares.append((self._href, " ".join("".join(self._texto).split())))
+            self._href = None
+
+
+def ancoras(html: str) -> list[tuple[str, str]]:
+    leitor = _Ancoras()
+    leitor.feed(html or "")
+    return leitor.pares
+
+
+class _SemSeguir(HTTPRedirectHandler):
+    def redirect_request(self, *args, **kwargs):  # devolve o 3xx para quem pediu, sem seguir
+        return None
+
+
+def _cabecalho(url: str) -> tuple[int, str | None]:
+    """Só o cabeçalho (HEAD): status e para onde o link manda. Nenhuma página é baixada."""
+    pedido = Request(url, method="HEAD", headers={"User-Agent": USER_AGENT})
+    try:
+        with build_opener(_SemSeguir).open(pedido, timeout=10) as resposta:
+            return resposta.status, resposta.headers.get("Location")
+    except HTTPError as erro:
+        return erro.code, erro.headers.get("Location")
+
+
+def destino_do_rastreamento(url: str, *, cabecalho=_cabecalho, saltos: int = 5) -> str | None:
+    """Segue os redirecionamentos de um link de rastreamento até o endereço de uma vaga (ou None)."""
+    atual = url
+    for _ in range(saltos):
+        try:
+            status, destino = cabecalho(atual)
+        except (OSError, ValueError):
+            return None
+        if status not in (301, 302, 303, 307, 308) or not destino:
+            return atual if _eh_link_de_vaga(atual) else None
+        atual = urljoin(atual, destino)
+        if _eh_link_de_vaga(atual):
+            return atual
+        if NAO_ABRIR.search(atual):
+            return None
+    return None
+
+
+def vagas_por_rastreamento(msg: Message, *, destino=destino_do_rastreamento,
+                           limite: int = LIMITE_RASTREAMENTO) -> list[VagaBruta]:
+    """Alerta em que todo link passa por rastreamento (ex.: Vagas.com): descobre a vaga de cada link com título."""
+    _plano, html = _partes(msg)
+    data = _data_email(msg)
+    vagas: list[VagaBruta] = []
+    vistos: set[str] = set()
+    for href, texto in ancoras(html or ""):
+        if len(vagas) >= limite:
+            break
+        if not href or href in vistos or len(texto) < 6 or NAO_ABRIR.search(href) or NAO_ABRIR.search(texto):
+            continue
+        vistos.add(href)
+        final = destino(href)
+        for plataforma, padrao in PADROES_LINK_VAGA.items():
+            if final and (m := padrao.search(final)):
+                link = canonizar(plataforma, m)
+                if all(v.link != link for v in vagas):
+                    vagas.append(VagaBruta(titulo=texto, link=link, fonte_tipo="email",
+                                           fonte_origem=f"{plataforma}-alerta", publicada_em=data))
+                break
     return vagas
 
 

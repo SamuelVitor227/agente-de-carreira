@@ -32,6 +32,7 @@ from .coleta import (
     robots_permite,
     so_links_de_rastreamento,
     vaga_de_html,
+    vagas_por_rastreamento,
     vagas_de_email,
     vagas_de_pagina,
 )
@@ -123,8 +124,10 @@ def coletar(
         if not vagas and not parece_alerta(msg):
             return True  # e-mail comum do site (termos, confirmação de cadastro, dicas): não é alerta
         if not vagas and so_links_de_rastreamento(msg):
-            erros.append(f"{nome}: alerta só com links de rastreamento (formato não suportado); ignorado")
-            return True
+            vagas = vagas_por_rastreamento(msg)  # RF-EV-11: segue os links até a vaga (nunca o de descadastro)
+            if not vagas:
+                erros.append(f"{nome}: alerta só com links de rastreamento e nenhum levou a uma vaga; ignorado")
+                return True
         if problema := problema_no_email(plataforma, links, len(vagas), conhecido):
             if saude.falha(nome, problema, parar=True):
                 falhas.append(f"{nome}: {problema}")
