@@ -272,10 +272,29 @@ Abas **Recomendadas** (nota 50 ou mais), **Outras**, **Salvas** e **Todas**, com
 
 **Vagas encerradas.** Um alerta de e-mail pode trazer vaga que já fechou. Por isso, a cada busca o agente abre de novo as vagas abertas que ninguém confere há 2 dias. Se a página diz "Não aceita mais candidaturas" (ou se o anúncio é velho demais pela data real, e não pela data do e-mail), a vaga sai da lista. O botão "Ainda estão abertas?" na tela de Vagas (ou `agente vagas conferir`) faz isso na hora. No LinkedIn, a conferência precisa da automação ligada; na Gupy, ela é feita pelo link.
 
+### Candidatura com tudo preenchido
+
+- **Respostas prontas** (Meu perfil → Respostas prontas, ou o cartão do Início): as perguntas que todo formulário faz, numa tela só. O que sai do seu perfil já vem escrito (conclusão do curso, inglês, links, modelos aceitos); pretensão salarial e disponibilidade são suas.
+- Nos sites (Gupy e outros), além dos dados básicos e do currículo, o agente responde as perguntas do formulário com essas respostas e põe a mensagem da vaga no campo de apresentação. Perguntas de diversidade nunca. Ele nunca clica em Enviar.
+- **Ver currículo desta vaga**, no painel da vaga: o PDF sob medida e o que mudou em relação ao currículo-base. Para anúncio em inglês, o currículo sai em inglês.
+- **Treinar entrevista**, em Minhas candidaturas: uma pergunta provável por vez, com a dica do seu perfil; as respostas guardadas valem para as próximas entrevistas.
+
+### Avisos, retornos e relatórios
+
+- Cada notificação (resumo, vaga boa, retorno, lembrete) também aparece no canto da tela do Windows.
+- A busca diária procura no Outlook (só leitura) os e-mails das empresas onde você se candidatou e move o funil; os ambíguos ficam para confirmar (`agente funil confirmar`).
+- A tela Relatórios mostra números e gráficos: vagas por semana, de onde vêm as vagas boas e o funil.
+
+### Instalar em outro computador
+
+Baixe o projeto e dê dois cliques em `instalar.cmd`. Ele instala o uv, o Python e os pacotes, o navegador do agente, cria o atalho e abre o app. Não precisa ter Python antes.
+
 ### Seus dados ficam seguros
 
 - **Várias tarefas ao mesmo tempo:** cada gravação relê o arquivo e mantém o que outra tarefa mudou. Se você clicar "Não tenho interesse" enquanto a busca roda, a busca não desfaz isso no fim.
 - **Nada fica pela metade:** o arquivo novo é escrito ao lado e só então troca o antigo. "Parar" pede à tarefa que pare com calma (o navegador fecha as abas dela) e só força depois de 15 segundos. Fechar o app com tarefas rodando pergunta se você quer parar tudo ou deixar terminando.
+- **Fora da nuvem:** `agente dados` mostra onde os dados estão e se a pasta sincroniza com o OneDrive. Em Configurações → "Tirar os dados da nuvem" (ou `agente dados mover`) eles vão para uma pasta só deste computador.
+- **Atualização com o app aberto:** uma versão antiga aberta não apaga opções novas dos arquivos, e o app avisa quando é hora de reabrir.
 - **Cópias de segurança:** uma por dia, guardadas por 7 dias em `data/copias/`. Em Configurações → "Cópias de segurança" (ou `agente copias restaurar NOME`) você volta a um dia anterior; o estado atual fica guardado antes. Se um arquivo de dados estiver danificado, o agente volta sozinho para a última cópia boa e avisa.
 
 ### Currículo

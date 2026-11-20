@@ -4,6 +4,36 @@ Os 92 requisitos funcionais da especificação estão implementados (M1 a M8). E
 
 **Prioridade:** Essencial (bloqueia o uso diário), Importante (melhora muito o resultado), Desejável.
 
+## Situação em 20/11/2026
+
+Feitos 21 dos 23. Os 2 que faltam dependem de você: um precisa ser acompanhado ao vivo e o outro precisa das suas respostas.
+
+| ID | Situação |
+|----|----------|
+| RF-EV-01 | Feito: `funil emails` e a busca diária leem os retornos no Outlook (só leitura) e movem o funil; retorno vira aviso. |
+| RF-EV-02 | Feito: aviso no canto da tela do Windows a cada notificação, sem configurar nada. |
+| RF-EV-03 | Feito: leitura dos cartões da página nova (`componentkey`), de 2 para 15 vagas em 2 pesquisas; janela de 3 dias. |
+| RF-EV-04 | Feito, opcional (Configurações → Glassdoor). **Falta validar com você** resolvendo a verificação de humano uma vez. |
+| RF-EV-05 | **Falta você**: abrir uma vaga real com Candidatura Simplificada e acompanhar o agente até a revisão. |
+| RF-EV-06 | Feito: formulário único de Respostas prontas, já com o que sai do perfil. **Falta você** responder pretensão salarial e disponibilidade. |
+| RF-EV-07 | Feito: perguntas dos formulários respondidas com o banco aprovado e o perfil (diversidade nunca). |
+| RF-EV-08 | Feito: a mensagem da vaga vai no campo de apresentação ou carta. |
+| RF-EV-09 | Feito: "Ver currículo desta vaga" (`agente vagas curriculo ID`). |
+| RF-EV-10 | Feito: anúncio em inglês gera o currículo com títulos e rótulos em inglês; o texto segue o do perfil até você aprovar a tradução. |
+| RF-EV-11 | Feito: links de rastreamento seguidos só pelo cabeçalho até a vaga; descadastro nunca. |
+| RF-EV-12 | Feito: cotas separadas de descrições (12) e conferências (10) por busca. |
+| RF-EV-13 | Feito: painel da vaga com a nota explicada (o que você tem, o que falta, cargo e nível). |
+| RF-EV-14 | Feito: vagas remotas de qualquer lugar, só do Brasil ou nenhuma. |
+| RF-EV-15 | Feito: "Empresas que eu quero" em Configurações. |
+| RF-EV-16 | Feito: réplicas sem dados pessoais das páginas do LinkedIn, do Outlook e do topo da vaga nos testes. |
+| RF-EV-17 | Feito: fonte parada aparece no Início com "Reativar". |
+| RF-EV-18 | Feito: porta de controle só em 127.0.0.1 e fechada com a última tarefa; cada tarefa registrada em `data/navegador.log`. |
+| RF-EV-19 | Feito: `agente dados` e "Tirar os dados da nuvem" em Configurações. **Você escolhe** se e quando mover. |
+| RF-EV-20 | Feito: números e gráficos na tela Relatórios. |
+| RF-EV-21 | Feito: "Treinar entrevista" em Minhas candidaturas. |
+| RF-EV-22 | Feito: lembrete a cada 30 dias de atualizar pelo LinkedIn. |
+| RF-EV-23 | Feito: `instalar.cmd` (uv, Python, pacotes, navegador, atalho). |
+
 ## 1. Pendências do uso real (Essencial)
 
 | ID | Requisito | Critério de aceite |
